@@ -1,0 +1,19 @@
+# v2 monitor runtime dependencies (Railway)
+requests>=2.31.0
+feedparser>=6.0.0
+python-dotenv>=1.0.0
+pandas>=1.5.0
+pytz>=2023.3
+twilio>=9.0.0
+supabase>=2.27.3
+
+# marketing_agent.py runtime dependencies
+# (only needed if you deploy marketing_agent.py as a separate Railway service —
+#  installed in the shared image so both services use the same requirements file)
+tweepy>=4.14.0
+praw>=7.7.0
+Pillow>=10.0.0
+anthropic>=0.39.0
+# Optional: moltbook and telegram (import failures caught in marketing_agent.py)
+# moltbook>=0.1.0
+# python-telegram-bot>=21.0

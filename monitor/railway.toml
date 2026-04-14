@@ -1,0 +1,54 @@
+# ─── Existing monitor service — DO NOT CHANGE ──────────────────────
+# This is the v2 halt monitor that captures NASDAQ LULD halts and writes
+# to Supabase. Has its own healthcheck endpoint on /health.
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 120
+startCommand = "python -m v2.monitor --force"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+
+# ─── Marketing agent service (added 2026-04-09) ────────────────────
+# Standalone async service that broadcasts halt activity to Twitter/X,
+# Reddit (r/Daytrading daily-thread comments), Discord #marketing, and
+# emails a Claude-generated daily recap at 4:30pm ET.
+#
+# Important: Railway's railway.toml does not officially support multi-
+# service deployment from a single file. The [[services]] block below
+# is a hint for tooling that does, but in practice you must ALSO create
+# the service in the Railway dashboard:
+#
+#   1. In the Railway project → New → GitHub Repo → ejv1234ny/haltpredict
+#   2. Set the start command (Settings → Service → Custom Start Command)
+#      to:  python marketing_agent.py
+#   3. Copy env vars from the existing haltpredict service:
+#        SUPABASE_URL, SUPABASE_SERVICE_KEY (or SUPABASE_SERVICE_ROLE_KEY),
+#        ANTHROPIC_API_KEY, RESEND_API_KEY
+#   4. Add the new ones:
+#        TWITTER_API_KEY, TWITTER_API_SECRET, TWITTER_ACCESS_TOKEN,
+#        TWITTER_ACCESS_TOKEN_SECRET, REDDIT_CLIENT_ID,
+#        REDDIT_CLIENT_SECRET, REDDIT_USERNAME, REDDIT_PASSWORD,
+#        REDDIT_USER_AGENT, DISCORD_WEBHOOK_MARKETING,
+#        MARKETING_ENABLED=false  (start in DRY mode)
+#   5. Verify [DRY] log lines as halts come in, then flip
+#      MARKETING_ENABLED=true.
+#
+# The shared requirements.txt is already updated with tweepy/praw/Pillow/
+# anthropic so both services use the same image. The marketing agent does
+# not need a healthcheck endpoint — it has no HTTP server, just async
+# pollers + an asyncio queue worker.
+[[services]]
+name = "marketing-agent"
+
+[services.build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[services.deploy]
+startCommand = "python marketing_agent.py"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
