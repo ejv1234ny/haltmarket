@@ -1,1 +1,23 @@
-
+{
+  "name": "haltmarket",
+  "image": "mcr.microsoft.com/devcontainers/universal:linux",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": { "version": "20" },
+    "ghcr.io/devcontainers/features/python:1": { "version": "3.11" },
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/devcontainers-contrib/features/supabase-cli:1": {},
+    "ghcr.io/devcontainers-contrib/features/pnpm:1": {}
+  },
+  "postCreateCommand": "npm install -g @anthropic-ai/claude-code && pip install uv",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "supabase.supabase-vscode",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "ms-python.python"
+      ]
+    }
+  },
+  "forwardPorts": [3000, 54321]
+}
