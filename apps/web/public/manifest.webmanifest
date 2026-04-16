@@ -1,0 +1,10 @@
+{
+  "name": "haltmarket",
+  "short_name": "haltmarket",
+  "description": "Real-money prediction market on NASDAQ LUDP halt reopen prices.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0a0a",
+  "theme_color": "#0a0a0a",
+  "icons": []
+}

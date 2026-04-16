@@ -1,0 +1,135 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PNPM_VERSION: 10.33.0
+  NODE_VERSION: 20.18.0
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  node:
+    name: node lint + typecheck + test + build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: install
+        run: pnpm install --frozen-lockfile
+
+      - name: lint
+        run: pnpm lint
+
+      - name: typecheck
+        run: pnpm typecheck
+
+      - name: test
+        run: pnpm test
+
+      - name: build
+        run: pnpm build
+
+  python:
+    name: python lint + typecheck + test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [monitor, resolver]
+    defaults:
+      run:
+        working-directory: apps/${{ matrix.app }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: sync
+        run: uv sync --all-extras
+
+      - name: ruff
+        run: uv run ruff check .
+
+      - name: mypy
+        run: uv run mypy
+
+      - name: pytest
+        run: uv run pytest
+
+  supabase:
+    name: supabase db lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: lint migrations
+        run: |
+          shopt -s nullglob
+          files=(supabase/migrations/*.sql)
+          if (( ${#files[@]} == 0 )); then
+            echo "no migrations yet (phase 0) — skipping"
+            exit 0
+          fi
+          supabase db lint --level warning
+
+  ledger-guard:
+    name: ledger-mutation guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: diff vs base
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${{ github.event.pull_request.base.sha || github.event.before || 'HEAD~1' }}"
+          if ! git cat-file -e "${base}" 2>/dev/null; then
+            echo "base ${base} not in history; comparing full migrations tree instead"
+            files=$(git ls-files 'supabase/migrations/**/*.sql')
+          else
+            files=$(git diff --name-only "${base}" HEAD -- 'supabase/migrations/**/*.sql' || true)
+          fi
+          if [ -z "${files}" ]; then
+            echo "no migration changes — ok"
+            exit 0
+          fi
+          echo "scanning: ${files}"
+          offenders=""
+          for f in ${files}; do
+            if grep -Eiq '(^|[^a-zA-Z_])(update|delete)[[:space:]]+(from[[:space:]]+)?[`"]?ledger_entries[`"]?' "$f"; then
+              offenders="${offenders}${f}\n"
+            fi
+          done
+          if [ -n "${offenders}" ]; then
+            printf "ledger_entries is append-only — forbidden mutation(s) detected:\n%b" "${offenders}"
+            exit 1
+          fi
+          echo "ok — no mutating statements against ledger_entries"
