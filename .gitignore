@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.uv/
+
+# Build output
+.next/
+dist/
+build/
+*.tsbuildinfo
+
+# Env
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Supabase
+supabase/.branches/
+supabase/.temp/
+supabase/seed.sql.bak
+
+# IDE / OS
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Test output
+coverage/
+.nyc_output/
+.pytest_cache/
+.hypothesis/
+
+# Turbo
+.turbo/
+
+# Vercel
+.vercel/
