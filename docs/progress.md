@@ -2,6 +2,13 @@
 
 Appended after each phase's PR merges. Format per `AGENTS.md` §8.
 
+## Phase 7 — Frontend (mocked data)
+- Merged: pending
+- PR: (opened from `phase-7-frontend-mocked`)
+- Tests added: 9 bin-math unit tests + 3 Playwright smoke specs (×2 projects = 6 runs)
+- Open questions escalated: 0
+- Notes: Next.js 14 App Router pages (`/`, `/market/[id]`, `/wallet`, `/history`, `/leaderboard`, `/sign-in`), shadcn-style primitives, Supabase auth wired against `@supabase/ssr` (magic-link + Google OAuth), PWA manifest with SVG mark, mock data layer with pub/sub realtime channels, guess-the-price bet UI per ADR-0002 (client-side auto-map to bin). All pages fall back cleanly when Supabase creds are absent. Playwright wired into CI via the official `mcr.microsoft.com/playwright` image. Phases 3-5 will replace mocks with real Supabase queries in a follow-up PR; all mock types carry `TODO(phase-N)` markers.
+
 ## Phase 0 — Bootstrap
 - Merged: 2026-04-16
 - PR: #2
