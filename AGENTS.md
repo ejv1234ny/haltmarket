@@ -19,7 +19,7 @@ Every architectural question is already answered in those two files. If you enco
 
 - **Product name:** haltmarket
 - **Domain:** haltmarket.com (assume DNS and TLS handled separately)
-- **Market mechanism:** parimutuel pool over a 20-bin log-spaced price ladder (see design doc §4.1)
+- **Market mechanism:** parimutuel pool over a 20-bin log-spaced price ladder with a closest-to-the-pin bonus layer (see design doc §4.1 and ADR-0002). Default fee 5%, default closest bonus 7%, remainder to winning bin pro-rata.
 - **Launch currency:** USDC only; fiat rails deferred
 - **Jurisdiction:** offshore entity, geo-blocking US — you do not handle this, just wire the `geo_country` and `kyc_status` fields so compliance can enforce
 - **Fee:** 5% of pool, configurable per market
@@ -118,9 +118,10 @@ Each phase has a **Goal**, **Deliverables**, **Acceptance**, and **Commit prefix
 
 ### Phase 2 — Halt ingestion
 
-**Goal.** Detect LUDP halts from the Nasdaq RSS feed within 5 seconds of publication.
+**Goal.** Detect LUDP, T1, T12, and H10 halts from the Nasdaq RSS feed within 5 seconds of publication. LUDP is pure volatility; T1 and T12 are news halts (filing / dissemination); H10 is regulatory. All four are valid halt events for market creation.
 
 **Deliverables.** `apps/monitor/` Python service with 3-second RSS poll cadence filtered to LUDP; dedup via persisted seen-set; migration `0002_halts.sql`; Polygon fetch for `last_price` at halt time; hot-standby leader election via `pg_try_advisory_lock`; `/metrics` endpoint; Dockerfile for Railway; integration test against a recorded RSS fixture.
+- Reason-code filter accepts {LUDP, T1, T12, H10}; emits a structured `halt_kind` field on `halts` (one of `volatility`, `news`, `regulatory`) so downstream phases can classify "hot vs boring" without re-parsing the RSS.
 
 **Acceptance.** Running locally against live Nasdaq RSS captures every LUDP that Polygon independently shows in a 1-hour window. Halt-to-DB p95 < 5s. Killing the leader causes standby takeover within 10s.
 
@@ -133,6 +134,8 @@ Each phase has a **Goal**, **Deliverables**, **Acceptance**, and **Commit prefix
 **Goal.** On every new halt, atomically create a market with a 20-bin ladder open for bets.
 
 **Deliverables.** Migration `0003_markets.sql` creating `markets`, `bins`, `bets`, `market_resolutions`, `payouts`; RLS: bets readable by owner + public aggregates; Postgres trigger on `halts` INSERT → `create_market(halt_id)` SECURITY DEFINER function; 20 log-spaced bins from `last_price × 0.5` to `last_price × 2.0` plus tail bins; `closes_at = halt_time + 90s`; status state machine (`open` → `locked` → `resolved` | `refunded`) enforced via trigger; scheduled function (every 15s) transitions `open` → `locked` at `closes_at`; unit tests covering ladder generation for penny stocks, large-caps, and price edge cases.
+- `markets.closest_bonus_bps int not null default 700` column (tunable per-market)
+- No change to bin construction — still 20 log-spaced bins plus tail bins
 
 **Acceptance.** Inserting a halt produces a market + 20 bins atomically. Market locks automatically at `closes_at`. Ladder tests pass for price range $0.10–$10,000.
 
@@ -144,7 +147,14 @@ Each phase has a **Goal**, **Deliverables**, **Acceptance**, and **Commit prefix
 
 **Goal.** Ship the `place-bet` edge function with all correctness properties.
 
-**Deliverables.** Edge function accepting `{ market_id, bin_id, stake_micro, idempotency_key }`; inside one SERIALIZABLE transaction: assert `market.status = 'open'` + `now() < closes_at`, assert `wallets.balance_micro ≥ stake_micro`, assert `idempotency_key` is new for `(user, market)`, call `post_transfer` with `(−) user_wallet, (+) market_pool`, insert `bets` row, increment `bins.stake_micro` + `markets.total_pool_micro`; rate limit 10 bets/sec per user + $1000 max stake per market per user; realtime broadcast on bins deltas; 4xx error taxonomy (`market_closed`, `insufficient_balance`, `duplicate_idempotency_key`, `rate_limited`); E2E test with 100 concurrent bets.
+**Deliverables.**
+
+- Accept `{ market_id, predicted_price numeric(12,4), stake_micro, idempotency_key }` (no more `bin_id` — the server derives it from `predicted_price`)
+- Server-side: look up the bin whose `[low_price, high_price)` contains the predicted price; reject if predicted_price is outside the ladder extremes
+- Store both `predicted_price` and `bin_id` on the `bets` row
+- Schema addition: `bets.predicted_price numeric(12,4) not null`
+
+Inside one SERIALIZABLE transaction: assert `market.status = 'open'` + `now() < closes_at`, assert `wallets.balance_micro ≥ stake_micro`, assert `idempotency_key` is new for `(user, market)`, call `post_transfer` with `(−) user_wallet, (+) market_pool`, insert `bets` row, increment `bins.stake_micro` + `markets.total_pool_micro`; rate limit 10 bets/sec per user + $1000 max stake per market per user; realtime broadcast on bins deltas; 4xx error taxonomy (`market_closed`, `insufficient_balance`, `duplicate_idempotency_key`, `rate_limited`); E2E test with 100 concurrent bets.
 
 **Acceptance.** p95 < 500ms under 100 concurrent users. No double-spends in 100K-iteration stress test. Ledger invariant holds after the stress test.
 
@@ -156,9 +166,31 @@ Each phase has a **Goal**, **Deliverables**, **Acceptance**, and **Commit prefix
 
 **Goal.** Detect reopens via Polygon and settle markets deterministically.
 
-**Deliverables.** `apps/resolver/` Python service polling every 5s; for locked markets with `halt_end_time < now() - 5s`: query Polygon `/v3/trades/{symbol}` preferring opening-cross condition code, fall back to first regular trade, refund after 15 min without data; on capture: compute fee, compute per-bet payouts via parimutuel formula, write `market_resolutions`, `post_transfer` with N legs in one txn, insert `payouts`, mark `resolved`; idempotent (restart-safe); handle re-halt scenario (extend wait); integration test with 5 historical Polygon fixtures.
+**Deliverables.** `apps/resolver/` Python service polling every 5s; for locked markets with `halt_end_time < now() - 5s`: query Polygon `/v3/trades/{symbol}` preferring opening-cross condition code, fall back to first regular trade, refund after 15 min without data; on capture: execute the Resolution math block below, write `market_resolutions`, `post_transfer` with all legs in one txn, insert `payouts`, mark `resolved`; idempotent (restart-safe); handle re-halt scenario (extend wait); integration test with 5 historical Polygon fixtures.
+
+**Resolution math (per ADR-0002):**
+
+Given captured `reopen_price`, compute:
+
+1. `gross_pool = markets.total_pool_micro`
+2. `fee = gross_pool × (markets.fee_bps / 10000)`
+3. `bonus = gross_pool × (markets.closest_bonus_bps / 10000)`
+4. `main_pool = gross_pool − fee − bonus`
+5. Find `winning_bin`: bin where `low_price ≤ reopen_price < high_price`, or the appropriate tail bin for extremes
+6. Find `closest_user`: the user with smallest `|predicted_price − reopen_price|` across ALL bets on this market (not just winning-bin bets). Tie-break: split the bonus equally among tied users
+7. For each bet in `winning_bin`: `payout = main_pool × (bet.stake_micro / winning_bin.stake_micro)`
+8. Build a single `post_transfer` with legs:
+   - `(−) market_pool`: gross_pool
+   - `(+) house_fees`: fee
+   - `(+) user_wallet` (closest user): bonus
+   - `(+) user_wallet` (each bin winner): their pro-rata share
+9. Mark `market.status = 'resolved'`, write `market_resolutions` row with `closest_bonus_winner_user_id` and `closest_bonus_amount_micro`
 
 **Acceptance.** Synthetic test: inject halt + reopen, winner gets expected payout to the micro. Mean settlement < 30s from `halt_end_time`. Idempotency test: kill mid-resolution, restart, no double-pay.
+- Single-closest-winner payout is deterministic and replayable
+- Tie-breaking: if N users tie exactly, each gets `bonus / N`
+- Closest winner can also be a bin winner; both payouts credit the same user_wallet in the same resolution txn
+- If no bettor submitted a `predicted_price` (shouldn't happen but guard anyway), the bonus folds into `main_pool`
 
 **Commit prefix.** `feat(resolver):`
 
@@ -181,6 +213,9 @@ Each phase has a **Goal**, **Deliverables**, **Acceptance**, and **Commit prefix
 **Goal.** Ship the user-facing app: market list, live market detail, bet placement, wallet, history, leaderboard.
 
 **Deliverables.** Next.js 14 App Router pages (`/`, `/market/[id]`, `/wallet`, `/history`, `/leaderboard`); Supabase auth (email + magic link + Google OAuth); realtime subscriptions to `markets:{id}` and `user:{id}` channels; mobile-first PWA with shadcn/ui dark mode; Playwright smoke tests; Vercel deploy with PR previews.
+- Bet placement UI: numeric price input (4-decimal precision), not bin selection. On keystroke, client renders "Your guess: $X.XX · bin $A.AA–$B.BB" as visual confirmation of the auto-map. A collapsed "view ladder" disclosure reveals the full 20-bin view for power users.
+- Receipt on successful bet: "Your guess: $X.XX · Stake: $Y" (bin not shown unless expanded).
+- Resolution screen: "You won $Z.ZZ" with expandable breakdown: "$A.AA for correct zone · $B.BB closest-to-the-pin bonus" when applicable.
 
 **Acceptance.** User can sign up → see open markets → place a bet → see live pool updates → see resolution → see payout in wallet. Lighthouse performance ≥90 on `/market/[id]`. Playwright green.
 

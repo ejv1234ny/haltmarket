@@ -95,6 +95,18 @@ The defining constraint is **time**: LUDP halts last roughly 5 minutes, with mos
 
 **Ladder construction.** From last price `P`: 20 bins log-spaced from `P × 0.5` to `P × 2.0`; `$0.01` floor; tail bins at each extreme.
 
+#### Closest-to-the-pin bonus layer
+
+To recover the "guess the price, closest wins" UX vision without sacrificing the retention properties of parimutuel bins, a configurable **closest-to-the-pin bonus** is carved out of each pool.
+
+- Users submit a numeric `predicted_price`; client rounds to the nearest bin for the parimutuel calculation but preserves the exact price on the `bets` row.
+- At resolution, the pool is split: `fee_bps` to house, `closest_bonus_bps` to the single user with smallest `|predicted_price − reopen_price|`, remainder to the winning bin pro-rata.
+- Defaults: `fee_bps = 500` (5%), `closest_bonus_bps = 700` (7%).
+- Tie-breaking: if multiple users share the exact minimum distance, the bonus is split equally among them.
+- A single user can win both the bin share and the closest bonus — they are additive credits to the same `user_wallet` within one resolution `txn_id`.
+
+See `docs/adrs/ADR-0002-closest-to-pin-bonus.md` for full rationale and options considered.
+
 ### 4.2 Money & custody
 
 Internal ledger holds user balances. Launch currencies:
