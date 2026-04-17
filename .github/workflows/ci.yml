@@ -100,12 +100,13 @@ jobs:
         run: uv run pytest
 
   supabase:
-    # Named "supabase" so branch protection stays stable. The job verifies that
-    # every migration in supabase/migrations/ applies cleanly to a fresh
-    # Postgres 17 matching supabase/config.toml's [db] major_version. This
-    # subsumes `supabase db lint` (a parse/typecheck on the same SQL) and
-    # catches plpgsql errors the same way — by executing CREATE FUNCTION.
-    name: supabase migrations apply cleanly
+    # Display name kept as "supabase db lint" so the existing branch-protection
+    # required-check stays matched. The job verifies that every migration in
+    # supabase/migrations/ applies cleanly to a fresh Postgres 17 matching
+    # supabase/config.toml's [db] major_version — a stricter check than
+    # `supabase db lint` (which is a parse/typecheck on the same SQL) and
+    # surfaces the same errors by executing CREATE FUNCTION etc.
+    name: supabase db lint
     runs-on: ubuntu-latest
     services:
       postgres:
