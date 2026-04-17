@@ -1,7 +1,7 @@
 # ADR-0001: Ledger Subsystem
 
-**Status:** Proposed
-**Date:** 2026-04-16
+**Status:** Accepted (shipped in Phase 1, migration `supabase/migrations/0001_ledger.sql`)
+**Date:** 2026-04-16 (proposed) · 2026-04-17 (accepted)
 **Deciders:** Eric (founder), future engineering lead, future compliance lead
 **Related:** `docs/design.md` §4.2 and §5
 

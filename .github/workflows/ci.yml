@@ -18,6 +18,21 @@ jobs:
   node:
     name: node lint + typecheck + test + build
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      LEDGER_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
     steps:
       - uses: actions/checkout@v4
 
@@ -30,6 +45,9 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
 
+      - name: install postgres client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
       - name: install
         run: pnpm install --frozen-lockfile
 
@@ -41,6 +59,9 @@ jobs:
 
       - name: test
         run: pnpm test
+
+      - name: ledger integration (pg17)
+        run: ./scripts/ledger-integration.sh
 
       - name: build
         run: pnpm build
@@ -79,24 +100,53 @@ jobs:
         run: uv run pytest
 
   supabase:
+    # Display name kept as "supabase db lint" so the existing branch-protection
+    # required-check stays matched. The job verifies that every migration in
+    # supabase/migrations/ applies cleanly to a fresh Postgres 17 matching
+    # supabase/config.toml's [db] major_version — a stricter check than
+    # `supabase db lint` (which is a parse/typecheck on the same SQL) and
+    # surfaces the same errors by executing CREATE FUNCTION etc.
     name: supabase db lint
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      PGPASSWORD: postgres
     steps:
       - uses: actions/checkout@v4
 
-      - uses: supabase/setup-cli@v1
-        with:
-          version: latest
+      - name: install postgres client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
 
-      - name: lint migrations
+      - name: apply migrations
         run: |
+          set -euo pipefail
           shopt -s nullglob
           files=(supabase/migrations/*.sql)
           if (( ${#files[@]} == 0 )); then
-            echo "no migrations yet (phase 0) — skipping"
+            echo "no migrations yet — skipping"
             exit 0
           fi
-          supabase db lint --level warning
+          psql "postgres://postgres:postgres@127.0.0.1:5432/postgres" \
+            --set=ON_ERROR_STOP=1 \
+            -f scripts/ledger-integration-setup.sql
+          for f in "${files[@]}"; do
+            echo "▶ applying $f"
+            psql "postgres://postgres:postgres@127.0.0.1:5432/postgres" \
+              --set=ON_ERROR_STOP=1 \
+              -f "$f"
+          done
 
   ledger-guard:
     name: ledger-mutation guard
