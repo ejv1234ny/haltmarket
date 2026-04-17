@@ -12,6 +12,7 @@ dependencies = [
   "psycopg[binary]>=3.2.3",
   "python-dotenv>=1.0.1",
   "structlog>=24.4.0",
+  "tzdata>=2024.2",
 ]
 
 [project.optional-dependencies]

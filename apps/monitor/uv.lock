@@ -64,6 +64,7 @@ dependencies = [
     { name = "psycopg", extra = ["binary"] },
     { name = "python-dotenv" },
     { name = "structlog" },
+    { name = "tzdata" },
 ]
 
 [package.optional-dependencies]
@@ -85,6 +86,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0.1" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.7.0" },
     { name = "structlog", specifier = ">=24.4.0" },
+    { name = "tzdata", specifier = ">=2024.2" },
 ]
 provides-extras = ["dev"]
 

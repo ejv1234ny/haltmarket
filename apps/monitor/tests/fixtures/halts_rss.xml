@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:ndaq="http://www.nasdaqtrader.com/">
+  <channel>
+    <title>NASDAQ Trade Halts</title>
+    <link>https://www.nasdaqtrader.com/trader.aspx?id=tradehalts</link>
+    <description>NASDAQ trade halts feed (fixture)</description>
+
+    <item>
+      <title>HMKT - LUDP</title>
+      <ndaq:IssueSymbol>HMKT</ndaq:IssueSymbol>
+      <ndaq:ReasonCode>LUDP</ndaq:ReasonCode>
+      <ndaq:HaltDate>04/17/2026</ndaq:HaltDate>
+      <ndaq:HaltTime>10:30:00</ndaq:HaltTime>
+      <ndaq:ResumptionDate>04/17/2026</ndaq:ResumptionDate>
+      <ndaq:ResumptionTradeTime>10:35:00</ndaq:ResumptionTradeTime>
+    </item>
+
+    <item>
+      <title>ACME - T1</title>
+      <ndaq:IssueSymbol>ACME</ndaq:IssueSymbol>
+      <ndaq:ReasonCode>T1</ndaq:ReasonCode>
+      <ndaq:HaltDate>04/17/2026</ndaq:HaltDate>
+      <ndaq:HaltTime>11:05:15</ndaq:HaltTime>
+    </item>
+
+    <item>
+      <title>BIOX - T12</title>
+      <ndaq:IssueSymbol>BIOX</ndaq:IssueSymbol>
+      <ndaq:ReasonCode>T12</ndaq:ReasonCode>
+      <ndaq:HaltDate>04/17/2026</ndaq:HaltDate>
+      <ndaq:HaltTime>12:00:00</ndaq:HaltTime>
+      <ndaq:ResumptionDate>04/17/2026</ndaq:ResumptionDate>
+      <ndaq:ResumptionTradeTime>12:10:00</ndaq:ResumptionTradeTime>
+    </item>
+
+    <item>
+      <title>PENNY - H10</title>
+      <ndaq:IssueSymbol>PENNY</ndaq:IssueSymbol>
+      <ndaq:ReasonCode>H10</ndaq:ReasonCode>
+      <ndaq:HaltDate>04/17/2026</ndaq:HaltDate>
+      <ndaq:HaltTime>13:45:30</ndaq:HaltTime>
+    </item>
+
+    <!-- Unsupported reason — parser must skip -->
+    <item>
+      <title>OLDCO - T3</title>
+      <ndaq:IssueSymbol>OLDCO</ndaq:IssueSymbol>
+      <ndaq:ReasonCode>T3</ndaq:ReasonCode>
+      <ndaq:HaltDate>04/17/2026</ndaq:HaltDate>
+      <ndaq:HaltTime>14:00:00</ndaq:HaltTime>
+    </item>
+
+    <!-- Malformed item with missing halt time — parser must skip silently -->
+    <item>
+      <title>BADCO - LUDP</title>
+      <ndaq:IssueSymbol>BADCO</ndaq:IssueSymbol>
+      <ndaq:ReasonCode>LUDP</ndaq:ReasonCode>
+      <ndaq:HaltDate>04/17/2026</ndaq:HaltDate>
+    </item>
+  </channel>
+</rss>
