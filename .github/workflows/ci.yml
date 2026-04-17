@@ -73,9 +73,22 @@ jobs:
       fail-fast: false
       matrix:
         app: [monitor, resolver]
-    defaults:
-      run:
-        working-directory: apps/${{ matrix.app }}
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      MONITOR_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+      PGPASSWORD: postgres
     steps:
       - uses: actions/checkout@v4
 
@@ -87,16 +100,39 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
+      - name: install postgres client
+        if: matrix.app == 'monitor'
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: apply migrations
+        if: matrix.app == 'monitor'
+        run: |
+          set -euo pipefail
+          psql "postgres://postgres:postgres@127.0.0.1:5432/postgres" \
+            --set=ON_ERROR_STOP=1 \
+            -f scripts/ledger-integration-setup.sql
+          for f in supabase/migrations/*.sql; do
+            echo "▶ applying $f"
+            psql "postgres://postgres:postgres@127.0.0.1:5432/postgres" \
+              --set=ON_ERROR_STOP=1 \
+              -f "$f"
+          done
+        working-directory: ${{ github.workspace }}
+
       - name: sync
+        working-directory: apps/${{ matrix.app }}
         run: uv sync --all-extras
 
       - name: ruff
+        working-directory: apps/${{ matrix.app }}
         run: uv run ruff check .
 
       - name: mypy
+        working-directory: apps/${{ matrix.app }}
         run: uv run mypy
 
       - name: pytest
+        working-directory: apps/${{ matrix.app }}
         run: uv run pytest
 
   supabase:
