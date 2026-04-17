@@ -142,9 +142,11 @@ describeIfDb('market lifecycle: halts-INSERT trigger', () => {
     expect(Number(binCount.count)).toBe(22);
   });
 
-  it('inserting a halt without last_price skips market creation', async () => {
+  it('LUDP halt without last_price skips market creation', async () => {
+    // Exercises create_market()'s `last_price IS NULL → return NULL` guard
+    // without also tripping the halt_kind gate (that's covered below).
     const sym = `NOP${Math.floor(Math.random() * 1_000_000_000)}`;
-    const haltId = await insertHalt(pool, sym, 'T1', new Date(), null);
+    const haltId = await insertHalt(pool, sym, 'LUDP', new Date(), null);
     expect(haltId).toBeTruthy();
     const { rowCount } = await pool.query(
       `select 1 from public.markets where halt_id = $1`,
@@ -176,6 +178,55 @@ describeIfDb('market lifecycle: halts-INSERT trigger', () => {
       ),
     );
     expect(Number(binCount.count)).toBe(22);
+  });
+});
+
+describeIfDb('halt_kind launch-scope gate — only LUDP creates markets', () => {
+  let pool: pg.Pool;
+  beforeAll(() => {
+    pool = new pg.Pool({ connectionString: DATABASE_URL });
+  });
+  afterAll(async () => {
+    await pool.end();
+  });
+
+  async function expectNoMarket(
+    reasonCode: string,
+    prefix: string,
+  ): Promise<void> {
+    const sym = `${prefix}${Math.floor(Math.random() * 1_000_000_000)}`;
+    // Supply a valid last_price so the no-market outcome is driven by the
+    // halt_kind trigger gate, not by the function's null-last-price guard.
+    const haltId = await insertHalt(pool, sym, reasonCode, new Date(), 25);
+    expect(haltId).toBeTruthy();
+    const { rowCount } = await pool.query(
+      `select 1 from public.markets where halt_id = $1`,
+      [haltId],
+    );
+    expect(rowCount).toBe(0);
+  }
+
+  it('T1 news halt does not create a market', async () => {
+    await expectNoMarket('T1', 'T1');
+  });
+
+  it('T12 news halt does not create a market', async () => {
+    await expectNoMarket('T12', 'T12');
+  });
+
+  it('H10 regulatory halt does not create a market', async () => {
+    await expectNoMarket('H10', 'H10');
+  });
+
+  it('LUDP volatility halt does create a market (sanity, inverse of above)', async () => {
+    const sym = `GATE${Math.floor(Math.random() * 1_000_000_000)}`;
+    const haltId = await insertHalt(pool, sym, 'LUDP', new Date(), 25);
+    expect(haltId).toBeTruthy();
+    const { rowCount } = await pool.query(
+      `select 1 from public.markets where halt_id = $1`,
+      [haltId],
+    );
+    expect(rowCount).toBe(1);
   });
 });
 

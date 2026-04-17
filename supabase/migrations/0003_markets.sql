@@ -389,9 +389,14 @@ comment on function public.create_market(uuid) is
   'second call for the same halt returns the existing market_id.';
 
 -- -----------------------------------------------------------------------------
--- halts-INSERT trigger: fires create_market() automatically. Phase 2 inserts
--- halts via insert_halt(); this trigger runs immediately after so the market
--- exists before the Realtime broadcast lands on the client.
+-- halts-INSERT trigger: fires create_market() automatically for LUDP halts
+-- (halt_kind = 'volatility') only. Launch scope per founder decision: T1 /
+-- T12 / H10 halts are ingested and classified by Phase 2 for future v2
+-- expansion, but at launch only volatility halts open tradable markets.
+--
+-- The gate is expressed as a WHEN clause rather than inside the trigger
+-- function so the scope is schema-visible (and so the function remains usable
+-- for manual admin-driven market creation on a non-volatility halt if needed).
 -- -----------------------------------------------------------------------------
 
 create or replace function public.halts_after_insert_create_market()
@@ -408,7 +413,14 @@ $$;
 
 create trigger halts_create_market_after_insert
   after insert on public.halts
-  for each row execute function public.halts_after_insert_create_market();
+  for each row
+  when (new.halt_kind = 'volatility')
+  execute function public.halts_after_insert_create_market();
+
+comment on trigger halts_create_market_after_insert on public.halts is
+  'Launch-scope gate: auto-creates a market only for LUDP (volatility) halts. '
+  'News (T1/T12) and regulatory (H10) halts are recorded but untraded at v1. '
+  'Relax the WHEN clause in a follow-up migration to expand scope.';
 
 -- -----------------------------------------------------------------------------
 -- find_bin_for_price(market_id, price): used by Phase 4 place-bet to map a
