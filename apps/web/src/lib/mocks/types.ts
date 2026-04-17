@@ -19,6 +19,9 @@ export interface MockMarket {
   halt_id: string;
   symbol: string;
   reason_code: string;
+  // halt_kind is introduced in the amended Phase 2 spec (ADR-0002 companion
+  // change): one of 'volatility' (LUDP), 'news' (T1/T12), 'regulatory' (H10).
+  halt_kind: 'volatility' | 'news' | 'regulatory';
   last_price: number;
   halt_time: string;
   closes_at: string;
@@ -27,27 +30,38 @@ export interface MockMarket {
   currency: Currency;
   total_pool_micro: number;
   fee_bps: number;
+  // Phase 3 adds `markets.closest_bonus_bps` (default 700 = 7%). ADR-0002.
+  closest_bonus_bps: number;
   winning_bin_id: string | null;
   reopen_price: number | null;
+  closest_bonus_winner_user_id: string | null;
+  closest_bonus_amount_micro: number | null;
   bins: MockBin[];
 }
 
 export interface MockBet {
   id: string;
   market_id: string;
+  // Phase 4 ADR-0002 change: server derives `bin_id` from `predicted_price`.
+  // We keep both on the client for render convenience; real bet submission
+  // will send only `predicted_price` + `stake_micro`.
   bin_id: string;
+  predicted_price: number;
   user_id: string;
   stake_micro: number;
   placed_at: string;
   status: BetStatus;
   symbol: string;
-  predicted_price: number;
 }
 
 export interface MockPayout {
   bet_id: string;
   market_id: string;
-  amount_micro: number;
+  // Parimutuel share of the main pool (88% slice) for bets in the winning bin.
+  bin_amount_micro: number;
+  // Closest-to-the-pin bonus (7% slice) if this bet was the single closest
+  // across the whole market. Additive; null when this bet did not win it.
+  bonus_amount_micro: number | null;
   created_at: string;
 }
 

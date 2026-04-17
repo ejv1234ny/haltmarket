@@ -30,10 +30,11 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-// ADR-0002: the bet form accepts a *price*, not a bin. This is the
-// client-side mapping from predicted price → winning bin. Returns null when
-// the price falls outside the ladder (tail-bin handling belongs to the
-// resolver — Phase 5 — not the UI).
+// ADR-0002: the bet form accepts a *price*, not a bin. The UI maps
+// client-side for preview ("your guess lands in bin $X–$Y"); the real
+// mapping is server-side at Phase 4 (`place-bet` derives bin_id from
+// predicted_price). Returns null for nonsense input; clamps to the
+// outermost bin for out-of-range prices so the preview is never empty.
 export function resolveBin(price: number, bins: MockBin[]): MockBin | null {
   if (!Number.isFinite(price) || price <= 0 || bins.length === 0) return null;
   const sorted = [...bins].sort((a, b) => a.idx - b.idx);
@@ -53,16 +54,31 @@ export function resolveBin(price: number, bins: MockBin[]): MockBin | null {
   return null;
 }
 
-export function impliedPayoutMultiple(
+// ADR-0002 hybrid math: the main payout pool is gross × (1 − fee_bps − bonus_bps).
+// Returns the multiple a new bet of `addedStakeMicro` would earn if its bin won
+// (bonus not included — that's at most one user per market).
+export function impliedMainPayoutMultiple(
   binStakeMicro: number,
   totalPoolMicro: number,
   addedStakeMicro: number,
   feeBps: number,
+  closestBonusBps: number,
 ): number {
   const newBinStake = binStakeMicro + addedStakeMicro;
   const newTotal = totalPoolMicro + addedStakeMicro;
   if (newBinStake === 0) return 0;
-  const feeFrac = feeBps / 10_000;
-  const payoutPool = newTotal * (1 - feeFrac);
-  return payoutPool / newBinStake;
+  const mainFrac = 1 - feeBps / 10_000 - closestBonusBps / 10_000;
+  const mainPool = newTotal * mainFrac;
+  return mainPool / newBinStake;
+}
+
+// Potential bonus if this bet ends up being the single closest across the
+// market. Doesn't depend on bin crowding — 7% of the gross pool goes to one
+// user (ties split equally; UI shows the un-split single-winner case).
+export function impliedBonusMicro(
+  totalPoolMicro: number,
+  addedStakeMicro: number,
+  closestBonusBps: number,
+): number {
+  return Math.floor(((totalPoolMicro + addedStakeMicro) * closestBonusBps) / 10_000);
 }

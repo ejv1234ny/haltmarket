@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import type { MockBin, MockMarket } from '@/lib/mocks/types';
-import { impliedPayoutMultiple, resolveBin } from '@/lib/bins';
+import { impliedBonusMicro, impliedMainPayoutMultiple, resolveBin } from '@/lib/bins';
 import { formatPrice, formatUsd, microToUsd, usdToMicro } from '@/lib/format';
 import { marketChannel, userChannel } from '@/lib/mocks/realtime';
 import { MOCK_USER } from '@/lib/mocks/fixtures';
@@ -35,15 +35,21 @@ export function BetForm({ market, walletBalanceMicro, disabled }: BetFormProps) 
 
   const targetBin = useMemo(() => resolveBin(price, market.bins), [price, market.bins]);
 
-  const payoutMultiple = useMemo(() => {
+  const mainMultiple = useMemo(() => {
     if (!targetBin || stakeMicro <= 0) return 0;
-    return impliedPayoutMultiple(
+    return impliedMainPayoutMultiple(
       targetBin.stake_micro,
       market.total_pool_micro,
       stakeMicro,
       market.fee_bps,
+      market.closest_bonus_bps,
     );
-  }, [targetBin, stakeMicro, market.total_pool_micro, market.fee_bps]);
+  }, [targetBin, stakeMicro, market.total_pool_micro, market.fee_bps, market.closest_bonus_bps]);
+
+  const bonusMicro = useMemo(
+    () => impliedBonusMicro(market.total_pool_micro, stakeMicro, market.closest_bonus_bps),
+    [market.total_pool_micro, stakeMicro, market.closest_bonus_bps],
+  );
 
   const insufficient = stakeMicro > walletBalanceMicro;
   const canSubmit =
@@ -55,7 +61,9 @@ export function BetForm({ market, walletBalanceMicro, disabled }: BetFormProps) 
       setError(insufficient ? 'Insufficient balance' : 'Enter a valid price and stake');
       return;
     }
-    // TODO(phase-4): call the `place-bet` edge function instead of mutating mocks.
+    // TODO(phase-4): POST to the `place-bet` edge function with
+    // { market_id, predicted_price, stake_micro, idempotency_key }. The
+    // server derives bin_id; the client mapping here is presentational.
     setError(null);
     targetBin.stake_micro += stakeMicro;
     market.total_pool_micro += stakeMicro;
@@ -98,7 +106,7 @@ export function BetForm({ market, walletBalanceMicro, disabled }: BetFormProps) 
             <span className="text-neutral-400">Predicted reopen price (USD)</span>
             <Input
               type="number"
-              step="0.01"
+              step="0.0001"
               min="0.01"
               inputMode="decimal"
               value={priceInput}
@@ -106,6 +114,11 @@ export function BetForm({ market, walletBalanceMicro, disabled }: BetFormProps) 
               aria-label="predicted reopen price"
               data-testid="price-input"
             />
+            <span className="text-xs text-neutral-500" data-testid="bin-preview">
+              {targetBin
+                ? `Your guess: ${formatPrice(price)} · bin ${formatPrice(targetBin.low_price)}–${formatPrice(targetBin.high_price)}`
+                : 'Enter a price to see the zone it lands in.'}
+            </span>
           </label>
 
           <label className="flex flex-col gap-1.5 text-sm">
@@ -129,19 +142,19 @@ export function BetForm({ market, walletBalanceMicro, disabled }: BetFormProps) 
 
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div className="flex flex-col gap-0.5">
-              <span className="text-xs uppercase tracking-wide text-neutral-500">Resolved bin</span>
-              <span className="font-mono text-neutral-100" data-testid="resolved-bin">
-                {targetBin
-                  ? `#${targetBin.idx + 1} · ${formatPrice(targetBin.low_price)}–${formatPrice(targetBin.high_price)}`
+              <span className="text-xs uppercase tracking-wide text-neutral-500">If your zone wins</span>
+              <span className="font-mono text-emerald-300" data-testid="payout-estimate">
+                {mainMultiple > 0 && Number.isFinite(mainMultiple)
+                  ? `≈ ${formatUsd(Math.round(microToUsd(stakeMicro) * mainMultiple * 1_000_000))}`
                   : '—'}
               </span>
             </div>
             <div className="flex flex-col gap-0.5">
-              <span className="text-xs uppercase tracking-wide text-neutral-500">If you win</span>
-              <span className="font-mono text-emerald-300" data-testid="payout-estimate">
-                {payoutMultiple > 0 && Number.isFinite(payoutMultiple)
-                  ? `≈ ${formatUsd(Math.round(microToUsd(stakeMicro) * payoutMultiple * 1_000_000))}`
-                  : '—'}
+              <span className="text-xs uppercase tracking-wide text-neutral-500">
+                Closest-to-pin bonus ({(market.closest_bonus_bps / 100).toFixed(0)}%)
+              </span>
+              <span className="font-mono text-sky-300" data-testid="bonus-estimate">
+                {bonusMicro > 0 ? `+ ${formatUsd(bonusMicro)}` : '—'}
               </span>
             </div>
           </div>
@@ -157,8 +170,7 @@ export function BetForm({ market, walletBalanceMicro, disabled }: BetFormProps) 
               className="rounded-md border border-emerald-800/60 bg-emerald-950/30 p-3 text-sm text-emerald-200"
               data-testid="bet-placed"
             >
-              Bet placed · {formatUsd(placed.stakeMicro)} on {formatPrice(placed.predictedPrice)}
-              {' '}(bin #{placed.bin.idx + 1})
+              Bet placed · your guess {formatPrice(placed.predictedPrice)} · stake {formatUsd(placed.stakeMicro)}
             </div>
           )}
         </form>

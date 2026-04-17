@@ -45,6 +45,13 @@ function seedLadder(
   return { bins, total };
 }
 
+const HALT_KIND_BY_CODE: Record<string, 'volatility' | 'news' | 'regulatory'> = {
+  LUDP: 'volatility',
+  T1: 'news',
+  T12: 'news',
+  H10: 'regulatory',
+};
+
 function mockMarket(input: {
   id: string;
   symbol: string;
@@ -55,11 +62,13 @@ function mockMarket(input: {
   reasonCode?: string;
 }): MockMarket {
   const { bins, total } = seedLadder(input.id, input.lastPrice, input.stakesUsd);
+  const reason = input.reasonCode ?? 'LUDP';
   return {
     id: input.id,
     halt_id: `halt-${input.id}`,
     symbol: input.symbol,
-    reason_code: input.reasonCode ?? 'LUDP',
+    reason_code: reason,
+    halt_kind: HALT_KIND_BY_CODE[reason] ?? 'volatility',
     last_price: input.lastPrice,
     halt_time: minutesAgo(input.haltMinutesAgo),
     closes_at: secondsFromNow(input.closesInSec),
@@ -68,8 +77,11 @@ function mockMarket(input: {
     currency: 'USDC',
     total_pool_micro: total,
     fee_bps: 500,
+    closest_bonus_bps: 700,
     winning_bin_id: null,
     reopen_price: null,
+    closest_bonus_winner_user_id: null,
+    closest_bonus_amount_micro: null,
     bins,
   };
 }
@@ -123,12 +135,16 @@ export const RESOLVED_MARKET: MockMarket = (() => {
     stakesUsd: { 8: 120, 9: 280, 10: 910, 11: 740, 12: 210 },
   });
   const winning = base.bins[10]!;
+  // 7% of the gross pool goes to a single closest user (mocked: us).
+  const bonusMicro = Math.floor((base.total_pool_micro * 700) / 10_000);
   return {
     ...base,
     status: 'resolved',
     closes_at: minutesAgo(15),
     winning_bin_id: winning.id,
     reopen_price: 191.05,
+    closest_bonus_winner_user_id: MOCK_USER.id,
+    closest_bonus_amount_micro: bonusMicro,
   };
 })();
 
@@ -167,7 +183,8 @@ export const MOCK_PAYOUTS: MockPayout[] = [
   {
     bet_id: 'bet-1',
     market_id: RESOLVED_MARKET.id,
-    amount_micro: usdToMicro(127.42),
+    bin_amount_micro: usdToMicro(113.2),
+    bonus_amount_micro: RESOLVED_MARKET.closest_bonus_amount_micro,
     created_at: minutesAgo(14),
   },
 ];

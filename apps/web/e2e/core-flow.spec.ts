@@ -20,11 +20,12 @@ test('sees markets, places a bet, sees a resolved payout', async ({ page }) => {
   await expect(page).toHaveURL(/\/market\//);
   await expect(page.getByTestId('bin-ladder')).toBeVisible();
 
-  // Place a bet via the guess-the-price UI.
+  // Place a bet via the guess-the-price UI (ADR-0002 hybrid mechanic).
   await page.getByTestId('price-input').fill('118.90');
   await page.getByTestId('stake-input').fill('25');
-  await expect(page.getByTestId('resolved-bin')).not.toHaveText('—');
+  await expect(page.getByTestId('bin-preview')).toContainText(/bin \$/);
   await expect(page.getByTestId('payout-estimate')).not.toHaveText('—');
+  await expect(page.getByTestId('bonus-estimate')).not.toHaveText('—');
   await page.getByTestId('place-bet').click();
   await expect(page.getByTestId('bet-placed')).toBeVisible();
 
@@ -44,6 +45,14 @@ test('sees markets, places a bet, sees a resolved payout', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Leaderboard' })).toBeVisible();
 });
 
+test('resolved market shows zone + bonus breakdown', async ({ page }) => {
+  await page.goto('/market/mkt-aapl-1');
+  await expect(page.getByTestId('resolution-breakdown')).toBeVisible();
+  await page.getByTestId('breakdown-toggle').click();
+  await expect(page.getByTestId('breakdown-bin')).toBeVisible();
+  await expect(page.getByTestId('breakdown-bonus')).toBeVisible();
+});
+
 test('bet form blocks insufficient balance', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('link', { name: /NVDA market/ }).click();
@@ -52,8 +61,9 @@ test('bet form blocks insufficient balance', async ({ page }) => {
   await expect(page.getByTestId('place-bet')).toHaveText(/insufficient balance/i);
 });
 
-test('resolved market hides the bet form', async ({ page }) => {
+test('resolved market hides the bet form and shows the ladder on request', async ({ page }) => {
   await page.goto('/market/mkt-aapl-1');
   await expect(page.getByText(/betting closed/i)).toBeVisible();
+  await page.getByTestId('ladder-toggle').click();
   await expect(page.getByTestId('bin-ladder')).toBeVisible();
 });

@@ -45,7 +45,12 @@ export default function HistoryPage() {
                           className="font-mono text-xs text-emerald-300"
                           data-testid={`payout-${bet.id}`}
                         >
-                          paid {formatUsd(payout.amount_micro)}
+                          paid {formatUsd(payout.bin_amount_micro + (payout.bonus_amount_micro ?? 0))}
+                          {payout.bonus_amount_micro ? (
+                            <span className="ml-1 text-sky-300">
+                              (incl. {formatUsd(payout.bonus_amount_micro)} bonus)
+                            </span>
+                          ) : null}
                         </span>
                       )}
                     </div>

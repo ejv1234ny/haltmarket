@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildLadder, impliedPayoutMultiple, resolveBin } from './bins';
+import { buildLadder, impliedBonusMicro, impliedMainPayoutMultiple, resolveBin } from './bins';
 
 describe('buildLadder', () => {
   it('produces 20 bins spanning 0.5× to 2.0× last price', () => {
@@ -47,17 +47,28 @@ describe('resolveBin', () => {
   });
 });
 
-describe('impliedPayoutMultiple', () => {
-  it('shrinks as the winning bin becomes a larger share of the pool', () => {
-    // Two markets with the same total pool; the first has its stake concentrated
-    // in the winning bin, the second has it spread across other bins.
-    const concentrated = impliedPayoutMultiple(100_000_000, 100_000_000, 10_000_000, 500);
-    const spread = impliedPayoutMultiple(10_000_000, 100_000_000, 10_000_000, 500);
-    expect(spread).toBeGreaterThan(concentrated);
+describe('impliedMainPayoutMultiple (ADR-0002 hybrid)', () => {
+  it('matches the 88% main pool when the bin owns the whole pool', () => {
+    const mult = impliedMainPayoutMultiple(0, 0, 1_000_000, 500, 700);
+    expect(mult).toBeCloseTo(0.88, 2);
   });
 
-  it('accounts for the fee (5%)', () => {
-    const mult = impliedPayoutMultiple(0, 0, 1_000_000, 500);
-    expect(mult).toBeCloseTo(0.95, 2);
+  it('shrinks as the winning bin becomes a larger share of the pool', () => {
+    const concentrated = impliedMainPayoutMultiple(100_000_000, 100_000_000, 10_000_000, 500, 700);
+    const spread = impliedMainPayoutMultiple(10_000_000, 100_000_000, 10_000_000, 500, 700);
+    expect(spread).toBeGreaterThan(concentrated);
+  });
+});
+
+describe('impliedBonusMicro', () => {
+  it('returns 7% of the new gross pool', () => {
+    const bonus = impliedBonusMicro(93_000_000, 7_000_000, 700);
+    expect(bonus).toBe(7_000_000);
+  });
+
+  it('scales linearly with the gross pool', () => {
+    const small = impliedBonusMicro(100_000, 0, 700);
+    const big = impliedBonusMicro(10_000_000, 0, 700);
+    expect(big).toBe(small * 100);
   });
 });
