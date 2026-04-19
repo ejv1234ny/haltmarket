@@ -99,10 +99,10 @@ supabase functions serve                # run edge functions locally
 
 ## Supabase project
 
-Linked project ref: `gidbmzzbwmodmwlbsngv` (us-east-2).
+Linked project ref: `sqjdfafewyphoroaivqq` (us-east-1, dashboard name "haltmarket").
 
 ```bash
-supabase link --project-ref gidbmzzbwmodmwlbsngv
+supabase link --project-ref sqjdfafewyphoroaivqq
 ```
 
 ## Status
