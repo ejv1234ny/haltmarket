@@ -26,7 +26,7 @@ Every architectural question is already answered in those two files. If you enco
 - **Betting window:** halt_time + 90 seconds, hard server-side enforcement
 - **Reopen-price source:** Polygon opening-cross condition code, with first-trade fallback
 - **Refund policy:** full refund (no fee) on any unresolved market
-- **Supabase project ref:** `gidbmzzbwmodmwlbsngv`
+- **Supabase project ref:** `sqjdfafewyphoroaivqq` (us-east-1, dashboard name "haltmarket")
 
 ## 2. Tech stack (non-negotiable)
 

@@ -9,16 +9,24 @@
     "lint": "next lint --max-warnings 0",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "clean": "rimraf .next .turbo node_modules"
+    "test:e2e": "playwright test",
+    "clean": "rimraf .next .turbo node_modules playwright-report test-results"
   },
   "dependencies": {
     "@haltmarket/ledger-client": "workspace:*",
     "@haltmarket/shared-types": "workspace:*",
+    "@supabase/ssr": "^0.10.2",
+    "@supabase/supabase-js": "^2.103.3",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.454.0",
     "next": "14.2.15",
     "react": "18.3.1",
-    "react-dom": "18.3.1"
+    "react-dom": "18.3.1",
+    "tailwind-merge": "^3.5.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "@types/node": "^20.16.10",
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.0",
