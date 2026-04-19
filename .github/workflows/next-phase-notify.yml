@@ -1,0 +1,107 @@
+name: next-phase-notify
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+jobs:
+  announce:
+    if: |
+      github.event.pull_request.merged == true &&
+      startsWith(github.event.pull_request.title, '[Phase ')
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: parse phase number from PR title
+        id: parse
+        shell: bash
+        run: |
+          set -euo pipefail
+          title="${{ github.event.pull_request.title }}"
+          # Extract the N from "[Phase N] ..." (also handles "[Phase 7 cleanup]")
+          phase=$(echo "$title" | sed -nE 's/^\[Phase ([0-9]+).*/\1/p')
+          if [ -z "$phase" ]; then
+            echo "could not parse phase number from title: $title"
+            exit 0
+          fi
+          next=$((phase + 1))
+          echo "merged_phase=$phase" >> "$GITHUB_OUTPUT"
+          echo "next_phase=$next" >> "$GITHUB_OUTPUT"
+          # Check which next-phase prompt exists.
+          if [ -f "docs/phase-prompts/phase-${next}.md" ]; then
+            echo "next_prompt=docs/phase-prompts/phase-${next}.md" >> "$GITHUB_OUTPUT"
+          elif [ -f "docs/phase-prompts/phase-${phase}-cleanup.md" ]; then
+            echo "next_prompt=docs/phase-prompts/phase-${phase}-cleanup.md" >> "$GITHUB_OUTPUT"
+          else
+            echo "next_prompt=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: comment on merged PR
+        if: steps.parse.outputs.next_prompt != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const next = '${{ steps.parse.outputs.next_phase }}';
+            const prompt = '${{ steps.parse.outputs.next_prompt }}';
+            const body = [
+              `✅ Phase ${{ steps.parse.outputs.merged_phase }} merged.`,
+              ``,
+              `**Next up:** Phase ${next}`,
+              `**Prompt:** \`${prompt}\``,
+              ``,
+              `To kick off in a Codespace on \`main\`:`,
+              `\`\`\`bash`,
+              `bash scripts/kickoff-next-phase.sh`,
+              `\`\`\``,
+              ``,
+              `_This comment posted by .github/workflows/next-phase-notify.yml._`
+            ].join('\n');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body,
+            });
+
+      - name: post to Discord (if webhook configured)
+        if: env.DISCORD_WEBHOOK_URL != '' && steps.parse.outputs.next_prompt != ''
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        shell: bash
+        run: |
+          curl -sS -H 'Content-Type: application/json' \
+            -d "{\"content\": \"**haltmarket**: Phase ${{ steps.parse.outputs.merged_phase }} merged. Next: Phase ${{ steps.parse.outputs.next_phase }} (\`${{ steps.parse.outputs.next_prompt }}\`). Run \`bash scripts/kickoff-next-phase.sh\` in a Codespace.\"}" \
+            "$DISCORD_WEBHOOK_URL"
+
+  # OPT-IN: fully-autonomous phase chaining.
+  # Requires a self-hosted runner labeled `claude-runner` with:
+  #   - Claude Code installed (npm install -g @anthropic-ai/claude-code)
+  #   - ANTHROPIC_API_KEY in the environment or as a secret
+  #   - Git configured to push to the haltmarket repo
+  # Uncomment to enable.
+  #
+  # auto-kickoff:
+  #   needs: announce
+  #   if: |
+  #     github.event.pull_request.merged == true &&
+  #     startsWith(github.event.pull_request.title, '[Phase ')
+  #   runs-on: [self-hosted, claude-runner]
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         ref: main
+  #         fetch-depth: 0
+  #     - name: kick off next phase
+  #       env:
+  #         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  #         GH_TOKEN: ${{ secrets.GH_TOKEN }}
+  #       run: |
+  #         git fetch origin main
+  #         git checkout main
+  #         git pull
+  #         bash scripts/kickoff-next-phase.sh
