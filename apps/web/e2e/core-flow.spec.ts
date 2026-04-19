@@ -18,6 +18,9 @@ test('sees markets, places a bet, sees a resolved payout', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('link', { name: /NVDA market/ }).click();
   await expect(page).toHaveURL(/\/market\//);
+  // Ladder is a power-user disclosure per ADR-0002 (LadderDisclosure) — click
+  // the toggle to reveal before asserting. Matches test 4 below.
+  await page.getByTestId('ladder-toggle').click();
   await expect(page.getByTestId('bin-ladder')).toBeVisible();
 
   // Place a bet via the guess-the-price UI (ADR-0002 hybrid mechanic).
