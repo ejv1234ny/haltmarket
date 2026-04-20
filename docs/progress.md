@@ -2,6 +2,13 @@
 
 Appended after each phase's PR merges. Format per `AGENTS.md` §8.
 
+## Phase 3 — Market lifecycle engine (amended by ADR-0002)
+- Merged: 2026-04-19
+- PR: #10 (squash)
+- Tests added: 14 ladder unit tests + 25 markets-client integration tests (pg17)
+- Open questions escalated: 0
+- Notes: Migration `0003_markets.sql` creates `markets`, `bins`, `bets`, `market_resolutions`, `payouts`. 22-bin ladder (1 tail-low + 20 log-spaced main + 1 tail-high, range `last_price × 0.5 → × 2.0`). Status state machine `open → locked → resolved | refunded` enforced via `markets_enforce_status_transition` BEFORE UPDATE trigger + `markets.status_timestamps` CHECK. `lock_due_markets()` RPC + edge function locks expired-open markets every 15s using `SELECT ... FOR UPDATE SKIP LOCKED` so concurrent resolves don't block the batch. `create_market()` Postgres trigger on `halts` INSERT is gated to `halt_kind = 'volatility'` (launch scope: LUDP only; T1/T12/H10 stay ingested but non-tradable at v1 — expanding is a one-line migration). Schema carries ADR-0002's `markets.closest_bonus_bps int not null default 700`, `bets.predicted_price numeric(12,4) not null`, and `market_resolutions.closest_bonus_winner_user_id uuid` + `closest_bonus_micro bigint` for Phase 5 to consume. Pure-TS `computeBinLadder` mirrors the SQL so the bet UI renders the "Your guess $X · bin $A–$B" preview without a DB round-trip; integration tests assert byte-for-byte agreement across $0.10–$10,000. `find_bin_for_price` RPC ready for Phase 4. PR also includes a one-line Playwright test fix (`click ladder-toggle before asserting bin-ladder visibility`) to keep main green — PR #8 had landed the ladder as a disclosure UI but its e2e asserted visibility without opening it.
+
 ## Phase 7 — Frontend (mocked data)
 - Merged: pending
 - PR: (opened from `phase-7-frontend-mocked`)
