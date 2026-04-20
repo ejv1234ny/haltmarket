@@ -1,10 +1,10 @@
-import type { MockBin } from './mocks/types';
+import type { Bin } from './data/types';
 
 // Generate 20 log-spaced bins from 0.5 × last_price to 2.0 × last_price.
 // Mirrors the Phase 3 ladder spec in AGENTS.md; kept here so the mocked
 // markets match what Codespace A will produce server-side.
-export function buildLadder(marketId: string, lastPrice: number): MockBin[] {
-  const bins: MockBin[] = [];
+export function buildLadder(marketId: string, lastPrice: number): Bin[] {
+  const bins: Bin[] = [];
   const low = lastPrice * 0.5;
   const high = lastPrice * 2.0;
   const steps = 20;
@@ -35,7 +35,7 @@ function round2(n: number): number {
 // mapping is server-side at Phase 4 (`place-bet` derives bin_id from
 // predicted_price). Returns null for nonsense input; clamps to the
 // outermost bin for out-of-range prices so the preview is never empty.
-export function resolveBin(price: number, bins: MockBin[]): MockBin | null {
+export function resolveBin(price: number, bins: Bin[]): Bin | null {
   if (!Number.isFinite(price) || price <= 0 || bins.length === 0) return null;
   const sorted = [...bins].sort((a, b) => a.idx - b.idx);
   const first = sorted[0]!;

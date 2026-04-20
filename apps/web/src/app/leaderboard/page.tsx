@@ -1,14 +1,17 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { MOCK_LEADERBOARD, MOCK_USER } from '@/lib/mocks/fixtures';
+import { fetchLeaderboard } from '@/lib/data/leaderboard';
 import { formatUsd } from '@/lib/format';
+import { getSessionUser } from '@/lib/session';
 import { cn } from '@/lib/utils';
 
-export default function LeaderboardPage() {
+export default async function LeaderboardPage() {
+  const [rows, user] = await Promise.all([fetchLeaderboard(), getSessionUser()]);
+
   return (
     <main className="flex flex-col gap-6">
       <header className="flex flex-col gap-2">
         <h1 className="font-mono text-3xl font-bold tracking-tight">Leaderboard</h1>
-        <p className="text-sm text-neutral-400">Rolling 30-day net P&amp;L across all resolved markets.</p>
+        <p className="text-sm text-neutral-400">Net P&amp;L across resolved markets. Minimum 5 bets to appear.</p>
       </header>
 
       <Card>
@@ -27,8 +30,8 @@ export default function LeaderboardPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-900">
-              {MOCK_LEADERBOARD.map((row) => {
-                const isMe = row.user_id === MOCK_USER.id;
+              {rows.map((row) => {
+                const isMe = row.user_id === user.id;
                 const positive = row.net_pnl_micro >= 0;
                 return (
                   <tr key={row.user_id} className={cn(isMe && 'bg-neutral-900/60')}>

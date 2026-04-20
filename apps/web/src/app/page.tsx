@@ -1,10 +1,10 @@
 import { MarketCard } from '@/components/market-card';
 import { Card, CardContent } from '@/components/ui/card';
-import { listAllMarkets } from '@/lib/mocks/fixtures';
+import { listAllMarkets } from '@/lib/data/markets';
 import { supabaseConfigured } from '@/lib/env';
 
-export default function HomePage() {
-  const markets = listAllMarkets();
+export default async function HomePage() {
+  const markets = await listAllMarkets();
   const open = markets.filter((m) => m.status === 'open');
   const locked = markets.filter((m) => m.status === 'locked');
   const resolved = markets.filter((m) => m.status === 'resolved' || m.status === 'refunded');
@@ -19,8 +19,8 @@ export default function HomePage() {
         {!supabaseConfigured && (
           <Card className="mt-2 border-amber-700/40 bg-amber-950/20">
             <CardContent className="p-4 text-xs text-amber-200">
-              Running on mocked data. Set <code className="font-mono">NEXT_PUBLIC_SUPABASE_URL</code> and{' '}
-              <code className="font-mono">NEXT_PUBLIC_SUPABASE_ANON_KEY</code> to wire real markets once Phase 3 ships.
+              Running on fixture data. Set <code className="font-mono">NEXT_PUBLIC_SUPABASE_URL</code> and{' '}
+              <code className="font-mono">NEXT_PUBLIC_SUPABASE_ANON_KEY</code> to wire live markets.
             </CardContent>
           </Card>
         )}

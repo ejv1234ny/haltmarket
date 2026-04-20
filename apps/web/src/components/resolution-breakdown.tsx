@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import type { MockBet, MockMarket } from '@/lib/mocks/types';
+import type { Bet, Market } from '@/lib/data';
 import { formatPrice, formatUsd } from '@/lib/format';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
@@ -13,8 +13,8 @@ export function ResolutionBreakdown({
   binAmountMicro,
   bonusAmountMicro,
 }: {
-  market: MockMarket;
-  bet: MockBet;
+  market: Market;
+  bet: Bet;
   binAmountMicro: number;
   bonusAmountMicro: number | null;
 }) {

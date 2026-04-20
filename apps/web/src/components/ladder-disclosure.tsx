@@ -1,12 +1,12 @@
 'use client';
 
 import { useState } from 'react';
-import type { MockMarket } from '@/lib/mocks/types';
+import type { Market } from '@/lib/data';
 import { BinLadder } from './bin-ladder';
 
 // ADR-0002 §Phase 7: the full 20-bin ladder is a power-user disclosure, not
 // a primary affordance. New users stay in the "guess the price" flow.
-export function LadderDisclosure({ market }: { market: MockMarket }) {
+export function LadderDisclosure({ market }: { market: Market }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="flex flex-col gap-3">

@@ -1,19 +1,19 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import type { MockMarket } from '@/lib/mocks/types';
+import { useCallback, useState } from 'react';
+import type { Market } from '@/lib/data';
+import { useMarketEvents } from '@/lib/data';
 import { formatUsd } from '@/lib/format';
-import { marketChannel } from '@/lib/mocks/realtime';
 
-export function MarketPoolLive({ market }: { market: MockMarket }) {
+export function MarketPoolLive({ market }: { market: Market }) {
   const [pool, setPool] = useState(market.total_pool_micro);
 
-  useEffect(() => {
-    const unsub = marketChannel(market.id).subscribe((ev) => {
-      if (ev.type === 'bin_delta') setPool(ev.total_pool_micro);
-    });
-    return unsub;
-  }, [market.id]);
+  useMarketEvents(
+    market.id,
+    useCallback((ev) => {
+      if (ev.type === 'bin_delta') setPool(ev.new_total_pool_micro);
+    }, []),
+  );
 
   return (
     <span className="font-mono text-neutral-100" data-testid="pool-total">

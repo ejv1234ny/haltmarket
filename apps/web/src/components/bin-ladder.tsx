@@ -1,24 +1,31 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import type { MockMarket } from '@/lib/mocks/types';
+import { useCallback, useState } from 'react';
+import type { Bin, Market } from '@/lib/data';
+import { useMarketEvents } from '@/lib/data';
 import { formatPrice, formatUsd } from '@/lib/format';
-import { marketChannel } from '@/lib/mocks/realtime';
 import { cn } from '@/lib/utils';
 
-export function BinLadder({ market }: { market: MockMarket }) {
-  const [, setTick] = useState(0);
+export function BinLadder({ market }: { market: Market }) {
+  // Keep a local mutable copy so realtime deltas rerender without touching
+  // the server-rendered prop. Stake deltas only hit the matching bin id.
+  const [bins, setBins] = useState<Bin[]>(() => market.bins.map((b) => ({ ...b })));
 
-  useEffect(() => {
-    const unsub = marketChannel(market.id).subscribe(() => setTick((t) => t + 1));
-    return unsub;
-  }, [market.id]);
+  useMarketEvents(
+    market.id,
+    useCallback((ev) => {
+      if (ev.type !== 'bin_delta') return;
+      setBins((prev) =>
+        prev.map((b) => (b.id === ev.bin_id ? { ...b, stake_micro: ev.new_stake_micro } : b)),
+      );
+    }, []),
+  );
 
-  const max = Math.max(1, ...market.bins.map((b) => b.stake_micro));
+  const max = Math.max(1, ...bins.map((b) => b.stake_micro));
 
   return (
     <div className="flex flex-col gap-1" data-testid="bin-ladder">
-      {market.bins
+      {bins
         .slice()
         .sort((a, b) => b.idx - a.idx)
         .map((bin) => {

@@ -1,33 +1,61 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
-import type { MockBin, MockMarket } from '@/lib/mocks/types';
+import type { Bin, Market } from '@/lib/data';
+import {
+  PlaceBetCallError,
+  callPlaceBet,
+  publishFallbackMarketEvent,
+  publishFallbackUserEvent,
+} from '@/lib/data';
+import { supabaseConfigured } from '@/lib/env';
 import { impliedBonusMicro, impliedMainPayoutMultiple, resolveBin } from '@/lib/bins';
 import { formatPrice, formatUsd, microToUsd, usdToMicro } from '@/lib/format';
-import { marketChannel, userChannel } from '@/lib/mocks/realtime';
-import { MOCK_USER } from '@/lib/mocks/fixtures';
 
 export interface BetFormProps {
-  market: MockMarket;
+  market: Market;
   walletBalanceMicro: number;
+  userId: string;
   disabled?: boolean;
 }
 
 type PlacedBet = {
-  bin: MockBin;
+  bin: Bin;
   stakeMicro: number;
   predictedPrice: number;
 };
 
-export function BetForm({ market, walletBalanceMicro, disabled }: BetFormProps) {
+const ERROR_MESSAGES: Record<string, string> = {
+  market_closed: 'This market already closed.',
+  insufficient_balance: 'Insufficient balance',
+  duplicate_idempotency_key: 'Bet already submitted.',
+  rate_limited: 'Slow down — max 10 bets per second.',
+  exceeds_per_market_limit: 'You have reached the $1,000 cap on this market.',
+  price_outside_ladder: 'Price is outside the allowed range.',
+  invalid_price_precision: 'Price supports up to 4 decimal places.',
+  market_not_found: 'Market no longer exists.',
+  unauthorized: 'Please sign in to place a bet.',
+  invalid_input: 'Check the price and stake, then try again.',
+  not_configured: 'Backend not configured — running in demo mode.',
+};
+
+function uuid(): string {
+  // crypto.randomUUID is available in all modern browsers + node 19+.
+  return (
+    globalThis.crypto as { randomUUID?: () => string } | undefined
+  )?.randomUUID?.() ?? `bet-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+export function BetForm({ market, walletBalanceMicro, userId, disabled }: BetFormProps) {
   const [priceInput, setPriceInput] = useState<string>(market.last_price.toFixed(2));
   const [stakeUsd, setStakeUsd] = useState<string>('10');
   const [placed, setPlaced] = useState<PlacedBet | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   const price = Number.parseFloat(priceInput);
   const stake = Number.parseFloat(stakeUsd);
@@ -53,34 +81,67 @@ export function BetForm({ market, walletBalanceMicro, disabled }: BetFormProps) 
 
   const insufficient = stakeMicro > walletBalanceMicro;
   const canSubmit =
-    !disabled && Number.isFinite(price) && price > 0 && stakeMicro > 0 && !insufficient && targetBin !== null;
+    !disabled &&
+    !submitting &&
+    Number.isFinite(price) &&
+    price > 0 &&
+    stakeMicro > 0 &&
+    !insufficient &&
+    targetBin !== null;
 
-  function onSubmit(event: React.FormEvent) {
-    event.preventDefault();
-    if (!canSubmit || !targetBin) {
-      setError(insufficient ? 'Insufficient balance' : 'Enter a valid price and stake');
-      return;
-    }
-    // TODO(phase-4): POST to the `place-bet` edge function with
-    // { market_id, predicted_price, stake_micro, idempotency_key }. The
-    // server derives bin_id; the client mapping here is presentational.
-    setError(null);
-    targetBin.stake_micro += stakeMicro;
-    market.total_pool_micro += stakeMicro;
-    marketChannel(market.id).publish({
-      type: 'bin_delta',
-      market_id: market.id,
-      bin_idx: targetBin.idx,
-      stake_delta_micro: stakeMicro,
-      total_pool_micro: market.total_pool_micro,
-    });
-    userChannel(MOCK_USER.id).publish({
-      type: 'wallet',
-      user_id: MOCK_USER.id,
-      balance_micro: walletBalanceMicro - stakeMicro,
-    });
-    setPlaced({ bin: targetBin, stakeMicro, predictedPrice: price });
-  }
+  const onSubmit = useCallback(
+    async (event: React.FormEvent) => {
+      event.preventDefault();
+      if (!canSubmit || !targetBin) {
+        setError(insufficient ? ERROR_MESSAGES.insufficient_balance! : 'Enter a valid price and stake');
+        return;
+      }
+      setError(null);
+      setSubmitting(true);
+      try {
+        if (supabaseConfigured) {
+          const receipt = await callPlaceBet({
+            marketId: market.id,
+            predictedPrice: price,
+            stakeMicro: BigInt(stakeMicro),
+            idempotencyKey: uuid(),
+          });
+          setPlaced({ bin: targetBin, stakeMicro, predictedPrice: price });
+          // The edge function already broadcast `bin_delta` on the
+          // markets:{id} channel; other mounted components will pick it up
+          // via useMarketEvents. Nothing else to do on the client.
+          void receipt;
+        } else {
+          // Fixture mode: optimistically update the in-memory state and
+          // publish to the fallback channel so the pool + ladder animate.
+          targetBin.stake_micro += stakeMicro;
+          market.total_pool_micro += stakeMicro;
+          publishFallbackMarketEvent({
+            type: 'bin_delta',
+            market_id: market.id,
+            bin_id: targetBin.id,
+            new_stake_micro: targetBin.stake_micro,
+            new_total_pool_micro: market.total_pool_micro,
+          });
+          publishFallbackUserEvent({
+            type: 'wallet',
+            user_id: userId,
+            balance_micro: walletBalanceMicro - stakeMicro,
+          });
+          setPlaced({ bin: targetBin, stakeMicro, predictedPrice: price });
+        }
+      } catch (err) {
+        if (err instanceof PlaceBetCallError) {
+          setError(ERROR_MESSAGES[err.code] ?? err.message);
+        } else {
+          setError('Something went wrong placing your bet. Try again in a moment.');
+        }
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [canSubmit, insufficient, market, price, stakeMicro, targetBin, userId, walletBalanceMicro],
+  );
 
   if (disabled) {
     return (
@@ -159,10 +220,10 @@ export function BetForm({ market, walletBalanceMicro, disabled }: BetFormProps) 
             </div>
           </div>
 
-          {error && <p className="text-xs text-red-400">{error}</p>}
+          {error && <p className="text-xs text-red-400" data-testid="bet-error">{error}</p>}
 
           <Button type="submit" variant="primary" size="lg" disabled={!canSubmit} data-testid="place-bet">
-            {insufficient ? 'Insufficient balance' : `Place $${Number.isFinite(stake) ? stake : 0} bet`}
+            {submitting ? 'Placing…' : insufficient ? 'Insufficient balance' : `Place $${Number.isFinite(stake) ? stake : 0} bet`}
           </Button>
 
           {placed && (

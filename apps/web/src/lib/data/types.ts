@@ -1,11 +1,16 @@
-// TODO(phase-3): replace these local interfaces with types from
-// `@haltmarket/shared-types` once Codespace A ships the real Supabase schema
-// (migration 0003_markets.sql). The shapes here mirror `docs/design.md` §5 so
-// the swap is a type rename, not a code change.
+// Domain types consumed by the web app. Shapes mirror the Supabase tables
+// from migrations 0001_ledger.sql, 0002_halts.sql, 0003_markets.sql,
+// 0004_bets.sql, and 0005_resolution.sql so the data layer's real queries
+// and its fixture fallback (for local dev without a Supabase URL) both
+// produce identical objects — the callers never branch on mode.
+//
+// Field names match DB columns verbatim. Component props keep these type
+// names — changing shape would violate the Phase 7 cleanup scope ("pure
+// data-layer substitution, don't touch UI unless a field name changed").
 
 import type { BetStatus, Currency, MarketStatus } from '@haltmarket/shared-types';
 
-export interface MockBin {
+export interface Bin {
   id: string;
   market_id: string;
   idx: number;
@@ -14,13 +19,11 @@ export interface MockBin {
   stake_micro: number;
 }
 
-export interface MockMarket {
+export interface Market {
   id: string;
   halt_id: string;
   symbol: string;
   reason_code: string;
-  // halt_kind is introduced in the amended Phase 2 spec (ADR-0002 companion
-  // change): one of 'volatility' (LUDP), 'news' (T1/T12), 'regulatory' (H10).
   halt_kind: 'volatility' | 'news' | 'regulatory';
   last_price: number;
   halt_time: string;
@@ -30,21 +33,17 @@ export interface MockMarket {
   currency: Currency;
   total_pool_micro: number;
   fee_bps: number;
-  // Phase 3 adds `markets.closest_bonus_bps` (default 700 = 7%). ADR-0002.
   closest_bonus_bps: number;
   winning_bin_id: string | null;
   reopen_price: number | null;
   closest_bonus_winner_user_id: string | null;
   closest_bonus_amount_micro: number | null;
-  bins: MockBin[];
+  bins: Bin[];
 }
 
-export interface MockBet {
+export interface Bet {
   id: string;
   market_id: string;
-  // Phase 4 ADR-0002 change: server derives `bin_id` from `predicted_price`.
-  // We keep both on the client for render convenience; real bet submission
-  // will send only `predicted_price` + `stake_micro`.
   bin_id: string;
   predicted_price: number;
   user_id: string;
@@ -54,24 +53,23 @@ export interface MockBet {
   symbol: string;
 }
 
-export interface MockPayout {
+export interface Payout {
   bet_id: string;
   market_id: string;
-  // Parimutuel share of the main pool (88% slice) for bets in the winning bin.
+  /** Sum of `payouts` rows with source='bin' for this bet. */
   bin_amount_micro: number;
-  // Closest-to-the-pin bonus (7% slice) if this bet was the single closest
-  // across the whole market. Additive; null when this bet did not win it.
+  /** Sum of `payouts` rows with source='closest_bonus' for this bet, or null. */
   bonus_amount_micro: number | null;
   created_at: string;
 }
 
-export interface MockWallet {
+export interface Wallet {
   user_id: string;
   currency: Currency;
   balance_micro: number;
 }
 
-export interface MockLedgerEntry {
+export interface LedgerEntry {
   id: number;
   txn_id: string;
   account: string;
@@ -80,7 +78,7 @@ export interface MockLedgerEntry {
   created_at: string;
 }
 
-export interface MockLeaderboardRow {
+export interface LeaderboardRow {
   rank: number;
   user_id: string;
   handle: string;
@@ -90,7 +88,7 @@ export interface MockLeaderboardRow {
   bets: number;
 }
 
-export interface MockUser {
+export interface AppUser {
   id: string;
   email: string;
   handle: string;

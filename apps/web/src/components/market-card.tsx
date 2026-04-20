@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import type { MockMarket } from '@/lib/mocks/types';
+import type { Market } from '@/lib/data';
 import { formatPrice, formatUsd } from '@/lib/format';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -12,7 +12,7 @@ const badgeVariantFor = {
   refunded: 'refunded',
 } as const;
 
-export function MarketCard({ market }: { market: MockMarket }) {
+export function MarketCard({ market }: { market: Market }) {
   return (
     <Link href={`/market/${market.id}`} aria-label={`${market.symbol} market`}>
       <Card className="transition hover:border-neutral-700">

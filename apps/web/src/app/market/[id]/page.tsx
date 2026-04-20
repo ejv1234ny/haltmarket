@@ -6,8 +6,11 @@ import { MarketPoolLive } from '@/components/market-pool-live';
 import { ResolutionBreakdown } from '@/components/resolution-breakdown';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { getMarketById, MOCK_BETS, MOCK_PAYOUTS, MOCK_USER, MOCK_WALLET } from '@/lib/mocks/fixtures';
+import { getMarketById } from '@/lib/data/markets';
+import { listBetsForUser, listPayoutsForBets } from '@/lib/data/bets';
+import { getWalletForUser } from '@/lib/data/wallet';
 import { formatPrice, formatUsd } from '@/lib/format';
+import { getSessionUser } from '@/lib/session';
 
 const badgeVariantFor = {
   open: 'live',
@@ -16,12 +19,20 @@ const badgeVariantFor = {
   refunded: 'refunded',
 } as const;
 
-export default function MarketPage({ params }: { params: { id: string } }) {
-  const market = getMarketById(params.id);
+export default async function MarketPage({ params }: { params: { id: string } }) {
+  const [market, user] = await Promise.all([
+    getMarketById(params.id),
+    getSessionUser(),
+  ]);
   if (!market) notFound();
 
-  const yourBet = MOCK_BETS.find((b) => b.market_id === market.id && b.user_id === MOCK_USER.id) ?? null;
-  const yourPayout = yourBet ? MOCK_PAYOUTS.find((p) => p.bet_id === yourBet.id) ?? null : null;
+  const [allBets, wallet] = await Promise.all([
+    listBetsForUser(user.id),
+    getWalletForUser(user.id),
+  ]);
+  const yourBet = allBets.find((b) => b.market_id === market.id) ?? null;
+  const payouts = yourBet ? await listPayoutsForBets([yourBet.id]) : new Map();
+  const yourPayout = yourBet ? payouts.get(yourBet.id) ?? null : null;
 
   return (
     <main className="flex flex-col gap-6">
@@ -78,7 +89,8 @@ export default function MarketPage({ params }: { params: { id: string } }) {
         <div className="flex flex-col gap-4">
           <BetForm
             market={market}
-            walletBalanceMicro={MOCK_WALLET.balance_micro}
+            walletBalanceMicro={wallet.balance_micro}
+            userId={user.id}
             disabled={market.status !== 'open'}
           />
           {market.status === 'resolved' && market.reopen_price && (
@@ -86,15 +98,33 @@ export default function MarketPage({ params }: { params: { id: string } }) {
               <CardHeader>
                 <CardTitle className="text-sm">Reopen</CardTitle>
               </CardHeader>
-              <CardContent className="flex flex-col gap-1 text-sm text-neutral-300">
+              <CardContent
+                className="flex flex-col gap-1 text-sm text-neutral-300"
+                data-testid="reopen-summary"
+              >
                 <div>
                   Reopen price: <span className="font-mono text-neutral-100">{formatPrice(market.reopen_price)}</span>
                 </div>
-                {market.closest_bonus_winner_user_id && market.closest_bonus_amount_micro !== null && (
-                  <div className="text-xs text-sky-300">
-                    Closest-to-pin bonus {formatUsd(market.closest_bonus_amount_micro)} awarded.
-                  </div>
-                )}
+                {market.winning_bin_id && (() => {
+                  const winning = market.bins.find((b) => b.id === market.winning_bin_id);
+                  if (!winning) return null;
+                  return (
+                    <div className="text-xs text-neutral-400">
+                      Bin: <span className="font-mono">
+                        {formatPrice(winning.low_price)}–{formatPrice(winning.high_price)}
+                      </span>
+                      {market.closest_bonus_amount_micro !== null &&
+                        market.closest_bonus_amount_micro > 0 && (
+                          <>
+                            {' · '}
+                            <span className="text-sky-300" data-testid="closest-bonus-summary">
+                              Bonus: {formatUsd(market.closest_bonus_amount_micro)} (closest prediction)
+                            </span>
+                          </>
+                        )}
+                    </div>
+                  );
+                })()}
               </CardContent>
             </Card>
           )}
