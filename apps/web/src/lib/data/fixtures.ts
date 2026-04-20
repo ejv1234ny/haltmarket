@@ -19,8 +19,13 @@ import type {
   AppUser,
 } from './types';
 
+// Zero-UUID for the unauthenticated fallback. Any page that queries by
+// user_id passes this straight to Postgres; a valid-UUID format avoids
+// "invalid input syntax for type uuid" when the real backend is wired
+// and the visitor isn't signed in. RLS filters rows out naturally
+// because this id doesn't exist in auth.users.
 export const DEMO_USER: AppUser = {
-  id: 'user-mock-1',
+  id: '00000000-0000-0000-0000-000000000001',
   email: 'you@haltmarket.dev',
   handle: 'you',
 };
