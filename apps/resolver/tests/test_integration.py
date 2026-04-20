@@ -386,7 +386,7 @@ def test_resolve_after_refund_rejects(conn: psycopg.Connection) -> None:
             (m.halt_id,),
         )
 
-    with conn.cursor() as cur, pytest.raises(psycopg.errors.RaiseException):
+    with conn.cursor() as cur, pytest.raises(psycopg.errors.DatabaseError):
         cur.execute(
             """
             select public.resolve_market(%s, %s::numeric, %s, 'test:polygon')
@@ -409,7 +409,7 @@ def test_refund_after_resolve_rejects(conn: psycopg.Connection) -> None:
             (m.halt_id, Decimal("4.27"), _now_utc()),
         )
 
-    with conn.cursor() as cur, pytest.raises(psycopg.errors.RaiseException):
+    with conn.cursor() as cur, pytest.raises(psycopg.errors.DatabaseError):
         cur.execute(
             "select public.refund_market(%s, 'after_resolve')", (m.halt_id,)
         )
@@ -437,7 +437,7 @@ def test_property_random_bet_sequences_preserve_sum_zero(conn: psycopg.Connectio
             price = Decimal(f"{float(last_price) * (0.4 + rng.random() * 1.6):.4f}")
             stake = rng.randint(100_000, 50_000_000)
             # Rate-limit / aggregate-cap rejection is expected; skip it.
-            with contextlib.suppress(psycopg.errors.RaiseException):
+            with contextlib.suppress(psycopg.errors.DatabaseError):
                 _place_bet(conn, uid, m.market_id, price, stake)
         _lock_market(conn, m.market_id)
         reopen = Decimal(f"{float(last_price) * (0.5 + rng.random() * 1.5):.4f}")
