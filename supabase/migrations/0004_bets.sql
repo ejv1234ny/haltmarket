@@ -95,6 +95,11 @@ language plpgsql
 security definer
 set search_path = public, pg_temp
 as $$
+-- RETURN TABLE output column names (`placed_at`, `stake_micro`, etc.) would
+-- otherwise shadow bets.placed_at / bins.stake_micro inside SQL statements
+-- in this function body. `use_column` tells PL/pgSQL to resolve ambiguous
+-- references to the table column, which is what every query below expects.
+#variable_conflict use_column
 declare
   v_market       public.markets%rowtype;
   v_bin          public.bins%rowtype;
