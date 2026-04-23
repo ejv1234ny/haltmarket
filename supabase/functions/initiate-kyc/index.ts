@@ -173,6 +173,178 @@ function parsePersonaPayload(raw: unknown):
   };
 }
 
+// -----------------------------------------------------------------------------
+// Sumsub vendor parser
+//
+// Webhook docs: https://developers.sumsub.com/api-reference/#section/Webhooks
+//
+// Signature: HMAC-SHA256(rawBody, secret) in hex via `X-Payload-Digest`.
+// Algorithm carried on `X-Payload-Digest-Alg` (expect HMAC_SHA256_HEX).
+// Payload carries externalUserId — populate this with the Supabase user_id
+// when creating the applicant via Sumsub's API.
+//
+// Status mapping (reviewAnswer): GREEN→approved, RED→rejected,
+// YELLOW→pending (the user is asked to resubmit).
+// -----------------------------------------------------------------------------
+
+function mapSumsubAnswer(answer: unknown): Status | null {
+  if (typeof answer !== 'string') return null;
+  const normalized = answer.toUpperCase();
+  if (normalized === 'GREEN') return 'approved';
+  if (normalized === 'RED') return 'rejected';
+  if (normalized === 'YELLOW') return 'pending';
+  return null;
+}
+
+function parseSumsubPayload(raw: unknown):
+  | { ok: true; value: Decision }
+  | { ok: false; message: string } {
+  if (typeof raw !== 'object' || raw === null) {
+    return { ok: false, message: 'body not an object' };
+  }
+  const r = raw as Record<string, unknown>;
+
+  const externalUserId = r.externalUserId;
+  if (!isUuid(externalUserId)) {
+    return {
+      ok: false,
+      message: 'externalUserId must be the Supabase user_id UUID',
+    };
+  }
+
+  // Non-terminal webhook types (applicantCreated, applicantPending, etc.)
+  // are pushed through as 'pending'. Only applicantReviewed carries the
+  // reviewResult that triggers approve/reject.
+  const type = typeof r.type === 'string' ? r.type : '';
+  let status: Status | null = null;
+  if (type === 'applicantReviewed') {
+    const rr = r.reviewResult as Record<string, unknown> | undefined;
+    status = mapSumsubAnswer(rr?.reviewAnswer);
+    if (!status) {
+      return {
+        ok: false,
+        message: `unknown reviewAnswer: ${String(rr?.reviewAnswer)}`,
+      };
+    }
+  } else if (type === 'applicantPending' || type === 'applicantCreated') {
+    status = 'pending';
+  } else {
+    // Non-actionable event types (applicantWorkflowCompleted, etc.). Ack
+    // with a no-op so Sumsub doesn't retry.
+    return { ok: false, message: `ignored event type: ${type}` };
+  }
+
+  const infoCountry = (r.info as Record<string, unknown> | undefined)?.country;
+  const geoCountry =
+    typeof infoCountry === 'string' && /^[a-zA-Z]{2,3}$/.test(infoCountry)
+      ? infoCountry.toUpperCase().slice(0, 2)
+      : undefined;
+
+  return {
+    ok: true,
+    value: {
+      userId: externalUserId as string,
+      status,
+      geoCountry: geoCountry ?? null,
+      provider: 'sumsub',
+      reference: typeof r.applicantId === 'string' ? (r.applicantId as string) : undefined,
+    },
+  };
+}
+
+// -----------------------------------------------------------------------------
+// Stripe Identity vendor parser
+//
+// Webhook docs: https://stripe.com/docs/webhooks/signatures
+//
+// Signature: `Stripe-Signature: t=<ts>,v1=<hex>[,v1=<hex>...]`. Verify via
+// HMAC-SHA256 over "<ts>.<raw_body>" with STRIPE_WEBHOOK_SECRET. Reject
+// older-than-5-min timestamps.
+//
+// The VerificationSession id/client_reference_id carries the user_id; set
+// `metadata.user_id` when creating the session via the Stripe API so this
+// parser can find it.
+// -----------------------------------------------------------------------------
+
+async function verifyStripeSignature(
+  body: string,
+  header: string,
+  secret: string,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const parts = header.split(',').map((p) => p.trim());
+  const tsPart = parts.find((p) => p.startsWith('t='));
+  const v1Signatures = parts
+    .filter((p) => p.startsWith('v1='))
+    .map((p) => p.slice(3));
+  if (!tsPart || v1Signatures.length === 0) {
+    return { ok: false, reason: 'signature header malformed' };
+  }
+  const ts = Number.parseInt(tsPart.slice(2), 10);
+  if (!Number.isFinite(ts)) return { ok: false, reason: 'timestamp invalid' };
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (Math.abs(nowSec - ts) > MAX_WEBHOOK_SKEW_SECONDS) {
+    return { ok: false, reason: 'timestamp skew too large' };
+  }
+  const expected = await hmacHex(secret, `${ts}.${body}`);
+  const match = v1Signatures.some((sig) => timingSafeEqualHex(expected, sig));
+  if (!match) return { ok: false, reason: 'signature mismatch' };
+  return { ok: true };
+}
+
+function parseStripeIdentityPayload(raw: unknown):
+  | { ok: true; value: Decision }
+  | { ok: false; message: string } {
+  if (typeof raw !== 'object' || raw === null) {
+    return { ok: false, message: 'body not an object' };
+  }
+  const r = raw as Record<string, unknown>;
+  const type = typeof r.type === 'string' ? r.type : '';
+  const obj = (r.data as Record<string, unknown> | undefined)
+    ?.object as Record<string, unknown> | undefined;
+  if (!obj) return { ok: false, message: 'missing data.object' };
+
+  const metadata = obj.metadata as Record<string, unknown> | undefined;
+  const userId = metadata?.user_id ?? obj.client_reference_id;
+  if (!isUuid(userId)) {
+    return {
+      ok: false,
+      message: 'metadata.user_id (or client_reference_id) must be the Supabase user UUID',
+    };
+  }
+
+  // Stripe Identity events we care about:
+  //   identity.verification_session.verified  → approved
+  //   identity.verification_session.requires_input → pending (user needs to
+  //       resubmit; not a hard reject).
+  //   identity.verification_session.canceled  → rejected (user abandoned)
+  //   identity.verification_session.processing → pending
+  //   identity.verification_session.created   → pending
+  let status: Status;
+  if (type === 'identity.verification_session.verified') status = 'approved';
+  else if (
+    type === 'identity.verification_session.requires_input' ||
+    type === 'identity.verification_session.processing' ||
+    type === 'identity.verification_session.created'
+  ) {
+    status = 'pending';
+  } else if (type === 'identity.verification_session.canceled') {
+    status = 'rejected';
+  } else {
+    return { ok: false, message: `ignored event type: ${type}` };
+  }
+
+  return {
+    ok: true,
+    value: {
+      userId: userId as string,
+      status,
+      geoCountry: null, // Stripe Identity doesn't return country on the session object
+      provider: 'stripe',
+      reference: typeof obj.id === 'string' ? (obj.id as string) : undefined,
+    },
+  };
+}
+
 function parseStubPayload(raw: unknown):
   | { ok: true; value: Decision }
   | { ok: false; message: string } {
@@ -251,12 +423,42 @@ function parseStubPayload(raw: unknown):
       return json(400, { error: 'invalid_json' });
     }
     parsed = parsePersonaPayload(body);
+  } else if (vendor === 'sumsub') {
+    const secret = env?.get('KYC_WEBHOOK_SECRET') ?? '';
+    if (!secret) return json(500, { error: 'webhook_secret_missing' });
+    const rawBody = await req.text();
+    const digest = req.headers.get('x-payload-digest') ?? '';
+    const alg = (req.headers.get('x-payload-digest-alg') ?? 'HMAC_SHA256_HEX').toUpperCase();
+    if (alg !== 'HMAC_SHA256_HEX') {
+      return json(401, { error: 'bad_signature', message: `unsupported alg ${alg}` });
+    }
+    const expected = await hmacHex(secret, rawBody);
+    if (!timingSafeEqualHex(expected, digest)) {
+      return json(401, { error: 'bad_signature', message: 'digest mismatch' });
+    }
+    let body: unknown;
+    try {
+      body = JSON.parse(rawBody);
+    } catch {
+      return json(400, { error: 'invalid_json' });
+    }
+    parsed = parseSumsubPayload(body);
+  } else if (vendor === 'stripe') {
+    const secret = env?.get('KYC_WEBHOOK_SECRET') ?? '';
+    if (!secret) return json(500, { error: 'webhook_secret_missing' });
+    const rawBody = await req.text();
+    const sigHeader = req.headers.get('stripe-signature') ?? '';
+    const verify = await verifyStripeSignature(rawBody, sigHeader, secret);
+    if (!verify.ok) return json(401, { error: 'bad_signature', message: verify.reason });
+
+    let body: unknown;
+    try {
+      body = JSON.parse(rawBody);
+    } catch {
+      return json(400, { error: 'invalid_json' });
+    }
+    parsed = parseStripeIdentityPayload(body);
   } else {
-    // Sumsub + Stripe Identity wire-up lands once those vendors are chosen.
-    //   * Sumsub: verify `X-Payload-Digest` HMAC, parse applicantId → user_id
-    //     via your own applicant-id map, reviewStatus → status.
-    //   * Stripe Identity: stripe.webhooks.constructEvent on raw body, then
-    //     read `identity.verification_session.verified` or `.requires_input`.
     return json(501, {
       error: 'vendor_not_implemented',
       message: `KYC_VENDOR=${vendor} parser not wired yet; see initiate-kyc/index.ts`,

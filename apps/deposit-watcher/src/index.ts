@@ -1,3 +1,4 @@
+import * as Sentry from '@sentry/node';
 import Fastify, { FastifyRequest } from 'fastify';
 import { createClient } from '@supabase/supabase-js';
 import { loadEnv } from './config.js';
@@ -13,6 +14,19 @@ import { creditDeposit } from './credit.js';
 
 const env = loadEnv();
 const log = new Logger(env.LOG_LEVEL);
+
+// Sentry is opt-in. When SENTRY_DSN is absent (dev, CI), the SDK is a no-op
+// and nothing changes. When present, process-level uncaught exceptions and
+// explicit captureException calls flow to the configured project.
+if (process.env.SENTRY_DSN) {
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    environment: process.env.DEPLOY_ENV ?? 'production',
+    tracesSampleRate: Number.parseFloat(process.env.SENTRY_TRACES_SAMPLE ?? '0.05'),
+    release: process.env.RAILWAY_DEPLOYMENT_ID,
+  });
+  log.info('Sentry initialized', { env: process.env.DEPLOY_ENV ?? 'production' });
+}
 
 const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -99,6 +113,9 @@ app.post('/webhooks/alchemy', async (req: FastifyRequest, reply) => {
         txHash: activity.hash,
         err: (err as Error).message,
       });
+      Sentry.captureException(err, {
+        tags: { kind: 'credit_failed', tx_hash: activity.hash },
+      });
     }
   }
 
@@ -136,6 +153,7 @@ async function main(): Promise<void> {
 
 main().catch((err: unknown) => {
   log.error('fatal', { err: (err as Error).message });
+  Sentry.captureException(err, { tags: { kind: 'boot' } });
   process.exit(1);
 });
 
