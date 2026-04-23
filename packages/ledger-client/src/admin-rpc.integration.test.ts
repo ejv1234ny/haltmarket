@@ -222,6 +222,107 @@ describeIfDb('admin_override_kyc + apply_kyc_decision', () => {
   });
 });
 
+describeIfDb('admin_action_log', () => {
+  let pool: pg.Pool;
+  beforeAll(() => {
+    pool = new pg.Pool({ connectionString: DATABASE_URL });
+  });
+  afterAll(async () => {
+    await pool.end();
+  });
+
+  it('set_system_flag appends an audit row with from/to payload', async () => {
+    const admin = await seedUser(pool, { admin: true });
+    const { rows: prevRows } = await pool.query<{ value: boolean }>(
+      `select value from public.system_flags where flag = 'deposits_frozen'`,
+    );
+    const prev = prevRows[0]!.value;
+
+    await asJwtUser(pool, admin, async (c) => {
+      const r = await callRpc(c, `select public.set_system_flag($1, $2, $3)`, [
+        'deposits_frozen',
+        !prev,
+        'audit-test',
+      ]);
+      expect(r.ok).toBe(true);
+    });
+
+    const { rows } = await pool.query<{
+      target: string;
+      payload: { from: boolean; to: boolean };
+    }>(
+      `select target, payload from public.admin_action_log
+        where action = 'set_system_flag' and actor_user_id = $1
+        order by created_at desc limit 1`,
+      [admin],
+    );
+    expect(rows[0]).toBeDefined();
+    expect(rows[0]!.target).toBe('deposits_frozen');
+    expect(rows[0]!.payload.from).toBe(prev);
+    expect(rows[0]!.payload.to).toBe(!prev);
+
+    await pool.query(
+      `update public.system_flags set value = $1 where flag = 'deposits_frozen'`,
+      [prev],
+    );
+  });
+
+  it('admin_set_user_admin logs from/to', async () => {
+    const admin = await seedUser(pool, { admin: true });
+    const target = await seedUser(pool, { admin: false });
+    await asJwtUser(pool, admin, async (c) => {
+      await callRpc(c, `select public.admin_set_user_admin($1, true)`, [target]);
+    });
+    const { rows } = await pool.query<{
+      payload: { from: boolean; to: boolean };
+    }>(
+      `select payload from public.admin_action_log
+        where action = 'admin_set_user_admin' and target_user_id = $1`,
+      [target],
+    );
+    expect(rows[0]).toBeDefined();
+    expect(rows[0]!.payload.from).toBe(false);
+    expect(rows[0]!.payload.to).toBe(true);
+  });
+
+  it('audit log is append-only — UPDATE and DELETE raise', async () => {
+    const admin = await seedUser(pool, { admin: true });
+    await asJwtUser(pool, admin, async (c) => {
+      await callRpc(
+        c,
+        `select public.log_admin_action('test_action', null, 'target', $1::jsonb)`,
+        [JSON.stringify({ test: true })],
+      );
+    });
+    const { rows } = await pool.query<{ id: string }>(
+      `select id from public.admin_action_log where action = 'test_action' limit 1`,
+    );
+    const id = rows[0]!.id;
+
+    const updateRes = await pool
+      .query(`update public.admin_action_log set action = 'tampered' where id = $1`, [id])
+      .then(() => ({ ok: true as const }))
+      .catch((e) => ({ ok: false as const, message: (e as Error).message }));
+    expect(updateRes.ok).toBe(false);
+    if (!updateRes.ok) expect(updateRes.message).toContain('append-only');
+
+    const deleteRes = await pool
+      .query(`delete from public.admin_action_log where id = $1`, [id])
+      .then(() => ({ ok: true as const }))
+      .catch((e) => ({ ok: false as const, message: (e as Error).message }));
+    expect(deleteRes.ok).toBe(false);
+  });
+
+  it('admin_get_action_log is admin-gated (42501 for non-admin)', async () => {
+    const user = await seedUser(pool, { admin: false });
+    const res = await asJwtUser(pool, user, async (c) =>
+      callRpc(c, `select * from public.admin_get_action_log(10, 0)`, []),
+    );
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.err.code).toBe('42501');
+  });
+});
+
 describeIfDb('admin_rescue_orphan_deposit', () => {
   let pool: pg.Pool;
   beforeAll(() => {

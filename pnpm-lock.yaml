@@ -118,6 +118,9 @@ importers:
       '@types/node':
         specifier: ^20.16.10
         version: 20.19.39
+      '@types/pg':
+        specifier: ^8.11.10
+        version: 8.20.0
       '@types/react':
         specifier: ^18.3.11
         version: 18.3.28
@@ -133,6 +136,9 @@ importers:
       eslint-config-next:
         specifier: 14.2.15
         version: 14.2.15(eslint@8.57.1)(typescript@5.9.3)
+      pg:
+        specifier: ^8.13.1
+        version: 8.20.0
       postcss:
         specifier: ^8.4.47
         version: 8.5.10
