@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from uuid import UUID
 
 import psycopg
@@ -234,7 +234,9 @@ class Database:
             row = cur.fetchone()
         if not row or not row[0]:
             return None
-        return row[0]
+        # psycopg Row is Any-typed; the column is timestamptz so it's a
+        # datetime. cast keeps mypy strict-mode happy without a runtime check.
+        return cast("datetime", row[0])
 
     def ledger_global_sum(self) -> int:
         """Invariant read used by the resolver's post-resolve sanity check."""
