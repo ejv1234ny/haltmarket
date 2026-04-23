@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from uuid import UUID
 
 import psycopg
@@ -205,6 +205,38 @@ class Database:
             ledger_txn_id=UUID(str(row[3])) if row[3] else None,
             idempotent_replay=bool(row[4]),
         )
+
+    def latest_rehalt_after(
+        self,
+        symbol: str,
+        after: datetime,
+        exclude_halt_id: UUID,
+    ) -> datetime | None:
+        """Most recent halt_time for `symbol` after `after`, excluding the
+        given halt_id (which is the original halt backing the current market).
+
+        Returns None when no such re-halt exists. Used to decide whether to
+        extend the refund deadline on a timed-out market.
+        """
+        self.connect()
+        assert self._conn is not None
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                select max(halt_time)
+                  from public.halts
+                 where symbol = %s
+                   and halt_time > %s
+                   and id <> %s
+                """,
+                (symbol, after, exclude_halt_id),
+            )
+            row = cur.fetchone()
+        if not row or not row[0]:
+            return None
+        # psycopg Row is Any-typed; the column is timestamptz so it's a
+        # datetime. cast keeps mypy strict-mode happy without a runtime check.
+        return cast("datetime", row[0])
 
     def ledger_global_sum(self) -> int:
         """Invariant read used by the resolver's post-resolve sanity check."""

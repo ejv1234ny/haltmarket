@@ -72,6 +72,18 @@ class FakeDb:
     def ledger_global_sum(self) -> int:
         return self.global_sum_value
 
+    rehalt_at: datetime | None = None
+    rehalt_calls: list[tuple] = field(default_factory=list)
+
+    def latest_rehalt_after(
+        self,
+        symbol: str,
+        after: datetime,
+        exclude_halt_id: UUID,
+    ) -> datetime | None:
+        self.rehalt_calls.append((symbol, after, exclude_halt_id))
+        return self.rehalt_at
+
 
 @dataclass
 class FakeFetcher:
@@ -310,6 +322,72 @@ def test_batch_isolation_one_bad_market_does_not_kill_others() -> None:
     # The good market still actioned; the bad one counted as an error.
     assert actioned == 1
     assert metrics.resolve_errors_total == 1
+
+
+def test_refund_deferred_when_rehalt_within_extension_window() -> None:
+    now = datetime.now(UTC)
+    market = _market(action="refund_timeout", locked_at=now - timedelta(minutes=20))
+    db = FakeDb(markets=[market])
+    # Re-halt landed 1 minute ago — within the 5-minute extension window.
+    db.rehalt_at = now - timedelta(minutes=1)
+    metrics = MetricsState()
+    r = Resolver(
+        db=db,
+        trades_fetcher=FakeFetcher(),
+        alerts=RecordingAlerts(),
+        metrics=metrics,
+        config=_config(),
+    )
+
+    actioned = r.run_once()
+
+    assert actioned == 0
+    assert db.refund_calls == []
+    assert metrics.refunds_total == 0
+    assert metrics.rehalt_extensions_total == 1
+
+
+def test_refund_proceeds_when_rehalt_outside_extension_window() -> None:
+    now = datetime.now(UTC)
+    market = _market(action="refund_timeout", locked_at=now - timedelta(minutes=20))
+    db = FakeDb(markets=[market])
+    # Re-halt was 10 minutes ago — beyond the 5-minute window.
+    db.rehalt_at = now - timedelta(minutes=10)
+    metrics = MetricsState()
+    r = Resolver(
+        db=db,
+        trades_fetcher=FakeFetcher(),
+        alerts=RecordingAlerts(),
+        metrics=metrics,
+        config=_config(),
+    )
+
+    r.run_once()
+
+    assert len(db.refund_calls) == 1
+    assert metrics.rehalt_extensions_total == 0
+
+
+def test_refund_deferred_via_polygon_silent_path() -> None:
+    now = datetime.now(UTC)
+    # action='resolve' but deadline passed and polygon empty. Re-halt present
+    # → defer even though we reached the polygon-silent refund branch.
+    market = _market(action="resolve", locked_at=now - timedelta(minutes=20))
+    db = FakeDb(markets=[market])
+    db.rehalt_at = now - timedelta(minutes=2)
+    metrics = MetricsState()
+    r = Resolver(
+        db=db,
+        trades_fetcher=FakeFetcher(reopen=None),
+        alerts=RecordingAlerts(),
+        metrics=metrics,
+        config=_config(),
+    )
+
+    r.run_once()
+
+    assert db.refund_calls == []
+    assert metrics.rehalt_extensions_total == 1
 
 
 @pytest.mark.parametrize("action", ["resolve", "refund_timeout"])

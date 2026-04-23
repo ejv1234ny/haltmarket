@@ -12,7 +12,8 @@ jobs:
   vercel:
     name: deploy web (Vercel)
     runs-on: ubuntu-latest
-    if: ${{ vars.ENABLE_VERCEL_DEPLOY == 'true' }}
+    needs: supabase-migrate
+    if: ${{ vars.ENABLE_VERCEL_DEPLOY == 'true' && !failure() }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -30,31 +31,44 @@ jobs:
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
   supabase-migrate:
-    name: supabase db push (prod)
+    name: supabase db push + functions deploy (prod)
     runs-on: ubuntu-latest
     if: ${{ vars.ENABLE_SUPABASE_DEPLOY == 'true' }}
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
       - uses: supabase/setup-cli@v1
         with:
           version: latest
-      - run: supabase link --project-ref "${{ vars.SUPABASE_PROJECT_REF }}"
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-      - run: supabase db push
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      - name: link project
+        run: supabase link --project-ref "${{ vars.SUPABASE_PROJECT_REF }}"
+      - name: db push
+        run: supabase db push
+      - name: deploy edge functions
+        run: |
+          set -euo pipefail
+          for dir in supabase/functions/*/; do
+            name=$(basename "$dir")
+            # Skip underscore-prefixed shared folders (e.g. _shared).
+            if [[ "$name" == _* ]]; then
+              continue
+            fi
+            echo "▶ deploying $name"
+            supabase functions deploy "$name" \
+              --project-ref "${{ vars.SUPABASE_PROJECT_REF }}"
+          done
 
   railway:
-    name: deploy python workers (Railway)
+    name: deploy workers (Railway)
     runs-on: ubuntu-latest
-    if: ${{ vars.ENABLE_RAILWAY_DEPLOY == 'true' }}
+    needs: supabase-migrate
+    if: ${{ vars.ENABLE_RAILWAY_DEPLOY == 'true' && !failure() }}
     strategy:
       fail-fast: false
       matrix:
-        service: [monitor, resolver]
+        service: [monitor, resolver, deposit-watcher]
     steps:
       - uses: actions/checkout@v4
       - name: railway up

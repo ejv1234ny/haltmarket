@@ -1,7 +1,9 @@
 import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
 import { SiteNav } from '@/components/site-nav';
+import { PrivyRoot } from '@/components/providers/privy';
 import { getSessionUser } from '@/lib/session';
+import { env } from '@/lib/env';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -24,8 +26,10 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
   return (
     <html lang="en" className="dark">
       <body className="min-h-screen bg-neutral-950 text-neutral-100 antialiased">
-        <SiteNav email={user.email} />
-        <div className="mx-auto w-full max-w-5xl px-4 py-6 sm:py-10">{children}</div>
+        <PrivyRoot appId={env.NEXT_PUBLIC_PRIVY_APP_ID || null}>
+          <SiteNav email={user.email} />
+          <div className="mx-auto w-full max-w-5xl px-4 py-6 sm:py-10">{children}</div>
+        </PrivyRoot>
       </body>
     </html>
   );

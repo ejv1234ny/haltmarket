@@ -95,6 +95,8 @@ class Resolver:
 
     def _process_market(self, m: ResolvableMarket) -> bool:
         if m.action == "refund_timeout":
+            if self._rehalt_defers_refund(m):
+                return False
             return self._refund(m, "refund_timeout:polygon_silent")
         if m.action != "resolve":
             logger.warning("unknown action %r for market %s", m.action, m.market_id)
@@ -120,6 +122,8 @@ class Resolver:
             # polling — if so, refund now rather than waiting for the next
             # tick.
             if self._locked_for_longer_than_refund_deadline(m):
+                if self._rehalt_defers_refund(m):
+                    return False
                 return self._refund(m, "refund_timeout:polygon_silent")
             logger.info("polygon had no reopen yet for %s (%s)", m.symbol, m.market_id)
             return False
@@ -131,6 +135,41 @@ class Resolver:
             return False
         deadline = m.locked_at + timedelta(minutes=self._config.refund_deadline_minutes)
         return datetime.now(UTC) >= deadline
+
+    def _rehalt_defers_refund(self, m: ResolvableMarket) -> bool:
+        """If a newer halt for this symbol landed after this market's halt,
+        and it's still within the re-halt extension window, skip the refund
+        so the rescheduled reopen has a chance to print.
+
+        Re-halts are common during volatility cascades (H1 → H2 → H3 on the
+        same symbol). Refunding the first market the moment the 15-minute
+        deadline passes would cheat users who reasonably expect resolution
+        on the eventual reopen.
+        """
+        if self._config.rehalt_extension_minutes <= 0:
+            return False
+        anchor = m.halt_end_time or m.locked_at
+        if anchor is None:
+            return False
+        try:
+            latest_rehalt = self._db.latest_rehalt_after(m.symbol, anchor, m.halt_id)
+        except Exception as e:  # noqa: BLE001
+            logger.exception("latest_rehalt_after failed for %s: %s", m.symbol, e)
+            return False
+        if latest_rehalt is None:
+            return False
+        window_end = latest_rehalt + timedelta(minutes=self._config.rehalt_extension_minutes)
+        if datetime.now(UTC) >= window_end:
+            return False
+        logger.info(
+            "deferring refund for %s (%s): rehalt at %s extends window to %s",
+            m.symbol,
+            m.market_id,
+            latest_rehalt.isoformat(),
+            window_end.isoformat(),
+        )
+        self._metrics.record_rehalt_extension()
+        return True
 
     def _resolve(
         self,

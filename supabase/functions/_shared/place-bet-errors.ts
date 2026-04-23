@@ -15,6 +15,9 @@ export type PlaceBetErrorCode =
   | 'price_outside_ladder'
   | 'invalid_price_precision'
   | 'market_not_found'
+  | 'kyc_required'
+  | 'region_blocked'
+  | 'aggregate_cap_exceeded'
   | 'invalid_input'
   | 'unauthorized'
   | 'internal_error';
@@ -35,6 +38,9 @@ const SQLSTATE_MAP: Record<string, PlaceBetErrorCode> = {
   H0006: 'price_outside_ladder',
   H0007: 'invalid_price_precision',
   H0008: 'market_not_found',
+  H0009: 'kyc_required',
+  H0010: 'region_blocked',
+  H0011: 'aggregate_cap_exceeded',
   H0099: 'invalid_input',
 };
 
@@ -49,6 +55,9 @@ const HTTP_STATUS: Record<PlaceBetErrorCode, number> = {
   price_outside_ladder: 422,
   invalid_price_precision: 422,
   market_not_found: 404,
+  kyc_required: 403,
+  region_blocked: 451,
+  aggregate_cap_exceeded: 409,
   invalid_input: 400,
   unauthorized: 401,
   internal_error: 500,

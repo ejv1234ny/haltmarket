@@ -10,6 +10,8 @@ import { impliedBonusMicro, impliedMainPayoutMultiple, resolveBin } from '@/lib/
 import { formatPrice, formatUsd, microToUsd, usdToMicro } from '@/lib/format';
 import { marketChannel, userChannel } from '@/lib/mocks/realtime';
 import { MOCK_USER } from '@/lib/mocks/fixtures';
+import { supabaseConfigured } from '@/lib/env';
+import { submitBet, messageFor } from '@/lib/markets/place-bet';
 
 export interface BetFormProps {
   market: MockMarket;
@@ -28,6 +30,7 @@ export function BetForm({ market, walletBalanceMicro, disabled }: BetFormProps) 
   const [stakeUsd, setStakeUsd] = useState<string>('10');
   const [placed, setPlaced] = useState<PlacedBet | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState<boolean>(false);
 
   const price = Number.parseFloat(priceInput);
   const stake = Number.parseFloat(stakeUsd);
@@ -53,32 +56,53 @@ export function BetForm({ market, walletBalanceMicro, disabled }: BetFormProps) 
 
   const insufficient = stakeMicro > walletBalanceMicro;
   const canSubmit =
-    !disabled && Number.isFinite(price) && price > 0 && stakeMicro > 0 && !insufficient && targetBin !== null;
+    !disabled && !submitting &&
+    Number.isFinite(price) && price > 0 && stakeMicro > 0 && !insufficient && targetBin !== null;
 
-  function onSubmit(event: React.FormEvent) {
+  async function onSubmit(event: React.FormEvent) {
     event.preventDefault();
     if (!canSubmit || !targetBin) {
       setError(insufficient ? 'Insufficient balance' : 'Enter a valid price and stake');
       return;
     }
-    // TODO(phase-4): POST to the `place-bet` edge function with
-    // { market_id, predicted_price, stake_micro, idempotency_key }. The
-    // server derives bin_id; the client mapping here is presentational.
     setError(null);
+    setSubmitting(true);
+
+    const result = await submitBet({
+      marketId: market.id,
+      predictedPrice: price,
+      stakeMicro: BigInt(stakeMicro),
+    });
+
+    setSubmitting(false);
+    if (!result.ok) {
+      setError(messageFor(result.code));
+      return;
+    }
+
+    // Local optimistic update. In real-supabase mode, the realtime channel
+    // will eventually echo the authoritative bin_delta; this just keeps the
+    // UI snappy for the user who placed the bet.
     targetBin.stake_micro += stakeMicro;
     market.total_pool_micro += stakeMicro;
-    marketChannel(market.id).publish({
-      type: 'bin_delta',
-      market_id: market.id,
-      bin_idx: targetBin.idx,
-      stake_delta_micro: stakeMicro,
-      total_pool_micro: market.total_pool_micro,
-    });
-    userChannel(MOCK_USER.id).publish({
-      type: 'wallet',
-      user_id: MOCK_USER.id,
-      balance_micro: walletBalanceMicro - stakeMicro,
-    });
+
+    if (!supabaseConfigured) {
+      // Mock-mode broadcast so other components (pool, wallet) update in
+      // the demo/test environment.
+      marketChannel(market.id).publish({
+        type: 'bin_delta',
+        market_id: market.id,
+        bin_idx: targetBin.idx,
+        stake_delta_micro: stakeMicro,
+        total_pool_micro: market.total_pool_micro,
+      });
+      userChannel(MOCK_USER.id).publish({
+        type: 'wallet',
+        user_id: MOCK_USER.id,
+        balance_micro: walletBalanceMicro - stakeMicro,
+      });
+    }
+
     setPlaced({ bin: targetBin, stakeMicro, predictedPrice: price });
   }
 
@@ -162,7 +186,11 @@ export function BetForm({ market, walletBalanceMicro, disabled }: BetFormProps) 
           {error && <p className="text-xs text-red-400">{error}</p>}
 
           <Button type="submit" variant="primary" size="lg" disabled={!canSubmit} data-testid="place-bet">
-            {insufficient ? 'Insufficient balance' : `Place $${Number.isFinite(stake) ? stake : 0} bet`}
+            {insufficient
+              ? 'Insufficient balance'
+              : submitting
+                ? 'Placing…'
+                : `Place $${Number.isFinite(stake) ? stake : 0} bet`}
           </Button>
 
           {placed && (

@@ -15,15 +15,19 @@
   "dependencies": {
     "@haltmarket/ledger-client": "workspace:*",
     "@haltmarket/shared-types": "workspace:*",
+    "@privy-io/react-auth": "^3.22.1",
     "@supabase/ssr": "^0.10.2",
     "@supabase/supabase-js": "^2.103.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^0.454.0",
-    "next": "14.2.15",
+    "next": "^14.2.35",
+    "qrcode.react": "^4.2.0",
     "react": "18.3.1",
     "react-dom": "18.3.1",
-    "tailwind-merge": "^3.5.0"
+    "server-only": "^0.0.1",
+    "tailwind-merge": "^3.5.0",
+    "viem": "^2.21.10"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",

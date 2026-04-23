@@ -83,6 +83,15 @@ async function seedUserWithBalance(
 ): Promise<string> {
   const uid = randomUUID();
   await pool.query('insert into auth.users (id) values ($1)', [uid]);
+  // Compliance gate (migration 0007): place_bet requires kyc_status='approved'
+  // when compliance_settings.require_kyc is true (default). Seed an approved
+  // profile so the happy-path integration tests exercise the bet flow.
+  await pool.query(
+    `insert into public.user_profiles (user_id, kyc_status)
+       values ($1, 'approved')
+     on conflict (user_id) do update set kyc_status = excluded.kyc_status`,
+    [uid],
+  );
   const txnId = randomUUID();
   await pool.query(
     `select public.post_transfer($1::uuid, $2::jsonb, 'test:seed')`,
