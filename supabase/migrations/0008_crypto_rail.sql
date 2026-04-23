@@ -230,21 +230,11 @@ begin
       using errcode = 'H0012';
   end if;
 
-  -- Record the deposit (pre-ledger; we backlink txn_id below).
+  -- Ledger first: post_transfer creates the ledger_transfers row that the
+  -- deposits.txn_id FK + deposits_confirmed_has_txn check constraint require.
+  -- Using the deposit id as the txn id keeps the 1:1 mapping for forensics.
   v_deposit_id := gen_random_uuid();
-  insert into public.deposits (
-    id, user_id, currency, amount_micro, status, provider,
-    chain_id, tx_hash, from_address, to_address, block_number,
-    confirmed_at
-  ) values (
-    v_deposit_id, v_user_id, 'USDC'::public.ledger_currency, p_amount_micro,
-    'confirmed', 'crypto_base',
-    p_chain_id, p_tx_hash, p_from_address, p_to_address, p_block_number,
-    now()
-  );
-
-  -- Ledger: user_wallet +amount, pending_deposits -amount
-  v_txn_id := v_deposit_id;
+  v_txn_id     := v_deposit_id;
   v_legs := jsonb_build_array(
     jsonb_build_object(
       'user_id',      v_user_id,
@@ -261,7 +251,20 @@ begin
   );
   perform public.post_transfer(v_txn_id, v_legs, 'crypto_deposit:' || p_tx_hash);
 
-  update public.deposits set txn_id = v_txn_id where id = v_deposit_id;
+  -- Now INSERT the deposit with both status='confirmed' AND txn_id — the
+  -- ledger_transfers row exists, so the FK + the check constraint are both
+  -- satisfied in one write. No follow-up UPDATE needed.
+  insert into public.deposits (
+    id, user_id, currency, amount_micro, status, provider,
+    chain_id, tx_hash, from_address, to_address, block_number,
+    txn_id, confirmed_at
+  ) values (
+    v_deposit_id, v_user_id, 'USDC'::public.ledger_currency, p_amount_micro,
+    'confirmed', 'crypto_base',
+    p_chain_id, p_tx_hash, p_from_address, p_to_address, p_block_number,
+    v_txn_id, now()
+  );
+
   return v_deposit_id;
 end;
 $$;

@@ -210,16 +210,27 @@ describeIfDb('request_withdrawal → mark_withdrawal_paid', () => {
     const uid = await seedUser(pool);
     const from = randomAddress();
     await mapAddress(pool, uid, from);
-    await creditDeposit(pool, {
+    const d = await creditDeposit(pool, {
       txHash: randomHash(),
       fromAddress: from,
       amountMicro: depositMicro,
     });
+    if (!d.ok) {
+      // Surface the real failure rather than letting it cascade into a
+      // misleading "balance would go negative" from the next call.
+      throw new Error(
+        `deposit seed failed: ${d.err.code ?? 'unknown'} ${d.err.message ?? ''}`,
+      );
+    }
     const w = await requestWithdrawal(pool, {
       userId: uid,
       amountMicro: withdrawMicro,
     });
-    if (!w.ok) throw new Error(`withdrawal seed failed: ${w.err.code} ${w.err.message}`);
+    if (!w.ok) {
+      throw new Error(
+        `withdrawal seed failed: ${w.err.code ?? 'unknown'} ${w.err.message ?? ''}`,
+      );
+    }
     return { uid, withdrawalId: w.id };
   }
 
