@@ -67,3 +67,18 @@ export async function markWithdrawalFailedAction(
   revalidatePath('/admin');
   return { ok: true };
 }
+
+export async function rescueOrphanAction(
+  orphanId: string,
+  userId: string,
+): Promise<ActionResult> {
+  const supabase = getServerSupabase();
+  if (!supabase) return { ok: false, error: 'supabase not configured' };
+  const { error } = await (supabase.rpc as unknown as RpcFn)(
+    'admin_rescue_orphan_deposit',
+    { p_orphan_id: orphanId, p_user_id: userId },
+  );
+  if (error) return { ok: false, error: error.message };
+  revalidatePath('/admin');
+  return { ok: true };
+}

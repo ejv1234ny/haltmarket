@@ -39,7 +39,13 @@ export function SiteNav({ email }: { email: string | null }) {
         <div className="flex items-center gap-2">
           {email ? (
             <>
-              <span className="hidden text-xs text-neutral-500 sm:inline">{email}</span>
+              <Link
+                href="/profile"
+                className="hidden text-xs text-neutral-500 hover:text-neutral-300 sm:inline"
+                title="Profile"
+              >
+                {email}
+              </Link>
               <form action="/auth/sign-out" method="post">
                 <button
                   type="submit"

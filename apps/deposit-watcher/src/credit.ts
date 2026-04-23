@@ -63,6 +63,34 @@ export async function creditDeposit(
         fromAddress: input.fromAddress,
       });
       depositsCreditedTotal.inc({ status: 'rejected' });
+
+      // H0014 (unknown sender) is the one rejection we persist, so admins can
+      // rescue the deposit via /admin/orphans. Best-effort — if the orphan
+      // record also fails, we log and continue.
+      if (code === 'H0014') {
+        const orphanRes = await supabase.rpc('record_orphan_deposit', {
+          p_chain_id: input.chainId,
+          p_tx_hash: input.txHash,
+          p_from_address: input.fromAddress,
+          p_to_address: input.toAddress,
+          p_amount_micro: input.amountMicro.toString(),
+          p_block_number: input.blockNumber.toString(),
+        });
+        if (orphanRes.error) {
+          log.error('record_orphan_deposit failed', {
+            code: (orphanRes.error as { code?: string }).code,
+            message: orphanRes.error.message,
+            txHash: input.txHash,
+          });
+        } else {
+          log.info('orphan deposit recorded for admin rescue', {
+            txHash: input.txHash,
+            fromAddress: input.fromAddress,
+            orphanId: typeof orphanRes.data === 'string' ? orphanRes.data : String(orphanRes.data ?? ''),
+          });
+        }
+      }
+
       return { kind: 'rejected', code, message };
     }
 

@@ -5,6 +5,7 @@ import { getServerSupabase } from '@/lib/supabase/server';
 import { supabaseConfigured } from '@/lib/env';
 import { safeBalancesMicros } from '@/lib/onchain/balances';
 import { FlagToggle } from './flag-toggle';
+import { OrphanRow } from './orphan-row';
 import { WithdrawalRow } from './withdrawal-row';
 
 export const dynamic = 'force-dynamic';
@@ -20,6 +21,14 @@ interface QueueRow {
   handle: string | null;
   amount_micro: number;
   destination_address: string;
+  age_seconds: number;
+}
+
+interface OrphanRowData {
+  id: string;
+  tx_hash: string;
+  from_address: string;
+  amount_micro: number;
   age_seconds: number;
 }
 
@@ -41,6 +50,7 @@ async function loadAdminData(): Promise<
       kind: 'ok';
       flags: FlagRow[];
       queue: QueueRow[];
+      orphans: OrphanRowData[];
       reconcile: ReconcileRow | null;
       onChainMicros: bigint | null;
       hotMicros: bigint | null;
@@ -72,11 +82,13 @@ async function loadAdminData(): Promise<
   const [
     { data: flagsRaw },
     queueRpc,
+    orphansRpc,
     reconcileRpc,
     balances,
   ] = await Promise.all([
     supabase.from('system_flags').select('flag, value, note'),
     (supabase.rpc as unknown as RpcFn)('get_admin_withdrawal_queue'),
+    (supabase.rpc as unknown as RpcFn)('admin_get_orphan_deposits'),
     (supabase.rpc as unknown as RpcFn)('reconcile_crypto_ledger'),
     safeBalancesMicros(),
   ]);
@@ -87,6 +99,16 @@ async function loadAdminData(): Promise<
         handle: (r.handle as string | null) ?? null,
         amount_micro: Number(r.amount_micro),
         destination_address: String(r.destination_address),
+        age_seconds: Number(r.age_seconds),
+      }))
+    : [];
+
+  const orphans: OrphanRowData[] = Array.isArray(orphansRpc.data)
+    ? (orphansRpc.data as Record<string, unknown>[]).map((r) => ({
+        id: String(r.id),
+        tx_hash: String(r.tx_hash),
+        from_address: String(r.from_address),
+        amount_micro: Number(r.amount_micro),
         age_seconds: Number(r.age_seconds),
       }))
     : [];
@@ -111,6 +133,7 @@ async function loadAdminData(): Promise<
       note: f.note,
     })),
     queue,
+    orphans,
     reconcile,
     onChainMicros: balances.totalMicros,
     hotMicros: balances.hotMicros,
@@ -131,7 +154,7 @@ export default async function AdminPage() {
   if (data.kind === 'unconfigured') notFound();
   if (data.kind === 'forbidden') redirect('/');
 
-  const { flags, queue, reconcile, onChainMicros, hotMicros, coldMicros } = data;
+  const { flags, queue, orphans, reconcile, onChainMicros, hotMicros, coldMicros } = data;
 
   const flagLabels: Record<string, string> = {
     deposits_frozen: 'Deposits',
@@ -204,6 +227,36 @@ export default async function AdminPage() {
             value={onChainMicros !== null && reconcile ? formatUsd(drift) : '—'}
             valueCls={badge.cls}
           />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Orphan deposits · {orphans.length}</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          {orphans.length === 0 ? (
+            <p className="p-4 text-sm text-neutral-400">
+              No orphan deposits. Unmapped senders get recorded here by the watcher.
+            </p>
+          ) : (
+            <table className="w-full text-sm">
+              <thead className="border-b border-neutral-900 text-xs uppercase tracking-wide text-neutral-500">
+                <tr>
+                  <th className="px-3 py-2 text-left">Tx</th>
+                  <th className="px-3 py-2 text-left">From</th>
+                  <th className="px-3 py-2 text-left">Amount</th>
+                  <th className="px-3 py-2 text-left">Age</th>
+                  <th className="px-3 py-2 text-left">Rescue</th>
+                </tr>
+              </thead>
+              <tbody>
+                {orphans.map((row) => (
+                  <OrphanRow key={row.id} row={row} />
+                ))}
+              </tbody>
+            </table>
+          )}
         </CardContent>
       </Card>
 

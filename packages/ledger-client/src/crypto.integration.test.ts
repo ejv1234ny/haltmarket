@@ -234,6 +234,70 @@ describeIfDb('request_withdrawal → mark_withdrawal_paid', () => {
     return { uid, withdrawalId: w.id };
   }
 
+  it('rejects invalid destination address (22023)', async () => {
+    const uid = await seedUser(pool);
+    const from = randomAddress();
+    await mapAddress(pool, uid, from);
+    await creditDeposit(pool, {
+      txHash: randomHash(),
+      fromAddress: from,
+      amountMicro: 100_000_000n,
+    });
+    const res = await requestWithdrawal(pool, {
+      userId: uid,
+      amountMicro: 10_000_000n,
+      destination: '0xnot-an-address',
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.err.code).toBe('22023');
+  });
+
+  it('rejects when withdrawals_frozen flag is on (H0016)', async () => {
+    const uid = await seedUser(pool);
+    const from = randomAddress();
+    await mapAddress(pool, uid, from);
+    await creditDeposit(pool, {
+      txHash: randomHash(),
+      fromAddress: from,
+      amountMicro: 100_000_000n,
+    });
+    await pool.query(
+      `update public.system_flags set value = true where flag = 'withdrawals_frozen'`,
+    );
+    try {
+      const res = await requestWithdrawal(pool, {
+        userId: uid,
+        amountMicro: 10_000_000n,
+      });
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.err.code).toBe('H0016');
+    } finally {
+      await pool.query(
+        `update public.system_flags set value = false where flag = 'withdrawals_frozen'`,
+      );
+    }
+  });
+
+  it('rejects overdraft via post_transfer non-negative assertion (23514)', async () => {
+    const uid = await seedUser(pool);
+    const from = randomAddress();
+    await mapAddress(pool, uid, from);
+    await creditDeposit(pool, {
+      txHash: randomHash(),
+      fromAddress: from,
+      amountMicro: 10_000_000n, // seed $10
+    });
+    const res = await requestWithdrawal(pool, {
+      userId: uid,
+      amountMicro: 50_000_000n, // try to withdraw $50
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.err.code).toBe('23514');
+      expect((res.err.message ?? '').toLowerCase()).toContain('negative');
+    }
+  });
+
   it('rejects withdrawal below the $5 minimum (H0017)', async () => {
     const uid = await seedUser(pool);
     const from = randomAddress();

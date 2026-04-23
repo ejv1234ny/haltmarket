@@ -1,4 +1,5 @@
 import { MarketCard } from '@/components/market-card';
+import { SubscribeButton } from '@/components/push/subscribe-button';
 import { Card, CardContent } from '@/components/ui/card';
 import { listAllMarkets } from '@/lib/mocks/fixtures';
 import { listMarkets } from '@/lib/markets/queries';
@@ -24,7 +25,10 @@ export default async function HomePage() {
   return (
     <main className="flex flex-col gap-8">
       <section className="flex flex-col gap-2">
-        <h1 className="font-mono text-3xl font-bold tracking-tight sm:text-4xl">Open halts</h1>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <h1 className="font-mono text-3xl font-bold tracking-tight sm:text-4xl">Open halts</h1>
+          <SubscribeButton vapidPublicKey={process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? null} />
+        </div>
         <p className="text-sm text-neutral-400">
           Bet on the reopen price of NASDAQ LUDP halts. Markets close 90 seconds after halt time.
         </p>
