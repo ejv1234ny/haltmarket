@@ -3,9 +3,34 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { MOCK_BETS, MOCK_PAYOUTS } from '@/lib/mocks/fixtures';
 import { formatPrice, formatUsd } from '@/lib/format';
+import { supabaseConfigured } from '@/lib/env';
+import { getServerSupabase } from '@/lib/supabase/server';
+import { listUserBets, listUserPayouts } from '@/lib/markets/queries';
+import type { MockBet, MockPayout } from '@/lib/mocks/types';
 
-export default function HistoryPage() {
-  const payoutByBet = new Map(MOCK_PAYOUTS.map((p) => [p.bet_id, p]));
+export const dynamic = 'force-dynamic';
+
+async function loadHistory(): Promise<{
+  bets: MockBet[];
+  payouts: MockPayout[];
+  signedIn: boolean;
+}> {
+  if (!supabaseConfigured) return { bets: MOCK_BETS, payouts: MOCK_PAYOUTS, signedIn: true };
+  const supabase = getServerSupabase();
+  if (!supabase) return { bets: [], payouts: [], signedIn: false };
+  const { data: userData } = await supabase.auth.getUser();
+  const userId = userData.user?.id;
+  if (!userId) return { bets: [], payouts: [], signedIn: false };
+  const [bets, payouts] = await Promise.all([
+    listUserBets(supabase, userId),
+    listUserPayouts(supabase, userId),
+  ]);
+  return { bets, payouts, signedIn: true };
+}
+
+export default async function HistoryPage() {
+  const { bets, payouts, signedIn } = await loadHistory();
+  const payoutByBet = new Map(payouts.map((p) => [p.bet_id, p]));
 
   return (
     <main className="flex flex-col gap-6">
@@ -14,16 +39,24 @@ export default function HistoryPage() {
         <p className="text-sm text-neutral-400">Every bet you&apos;ve placed. Live markets appear here in real time.</p>
       </header>
 
+      {!signedIn && (
+        <Card className="border-amber-700/40 bg-amber-950/20">
+          <CardContent className="p-4 text-xs text-amber-200">
+            Sign in to see your bet history.
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle>Your bets</CardTitle>
         </CardHeader>
         <CardContent>
-          {MOCK_BETS.length === 0 ? (
+          {bets.length === 0 ? (
             <p className="text-sm text-neutral-400">No bets yet.</p>
           ) : (
             <ul className="divide-y divide-neutral-900">
-              {MOCK_BETS.map((bet) => {
+              {bets.map((bet) => {
                 const payout = payoutByBet.get(bet.id);
                 return (
                   <li key={bet.id} className="flex items-center justify-between gap-4 py-3 text-sm">

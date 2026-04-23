@@ -51,6 +51,16 @@ def _seed_user(conn: psycopg.Connection, micros: int) -> UUID:
     uid = uuid4()
     with conn.cursor() as cur:
         cur.execute("insert into auth.users (id) values (%s)", (uid,))
+        # Compliance gate (migration 0007): place_bet requires
+        # kyc_status='approved' when compliance_settings.require_kyc is true.
+        cur.execute(
+            """
+            insert into public.user_profiles (user_id, kyc_status)
+              values (%s, 'approved')
+            on conflict (user_id) do update set kyc_status = excluded.kyc_status
+            """,
+            (uid,),
+        )
         cur.execute(
             """
             select public.post_transfer(

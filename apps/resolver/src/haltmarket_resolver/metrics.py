@@ -27,6 +27,7 @@ class MetricsState:
         self.last_settlement_ms: float = 0.0
         self.max_settlement_ms: float = 0.0
         self.invariant_failures_total: int = 0
+        self.rehalt_extensions_total: int = 0
         self.is_leader: int = 0
 
     def record_resolve(self, settlement_ms: float) -> None:
@@ -52,6 +53,10 @@ class MetricsState:
         with self._lock:
             self.invariant_failures_total += 1
 
+    def record_rehalt_extension(self) -> None:
+        with self._lock:
+            self.rehalt_extensions_total += 1
+
     def set_leader(self, leader: bool) -> None:
         with self._lock:
             self.is_leader = 1 if leader else 0
@@ -76,6 +81,8 @@ class MetricsState:
                     f"haltmarket_resolver_max_settlement_ms {self.max_settlement_ms:.3f}",
                     "# TYPE haltmarket_resolver_invariant_failures_total counter",
                     f"haltmarket_resolver_invariant_failures_total {self.invariant_failures_total}",
+                    "# TYPE haltmarket_resolver_rehalt_extensions_total counter",
+                    f"haltmarket_resolver_rehalt_extensions_total {self.rehalt_extensions_total}",
                     "",
                 )
             )

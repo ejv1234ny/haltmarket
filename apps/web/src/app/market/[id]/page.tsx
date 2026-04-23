@@ -8,6 +8,17 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { getMarketById, MOCK_BETS, MOCK_PAYOUTS, MOCK_USER, MOCK_WALLET } from '@/lib/mocks/fixtures';
 import { formatPrice, formatUsd } from '@/lib/format';
+import { supabaseConfigured } from '@/lib/env';
+import { getServerSupabase } from '@/lib/supabase/server';
+import {
+  getMarket,
+  getUserBetForMarket,
+  getUserPayoutForBet,
+  getUserWallet,
+} from '@/lib/markets/queries';
+import type { MockBet, MockMarket, MockPayout } from '@/lib/mocks/types';
+
+export const dynamic = 'force-dynamic';
 
 const badgeVariantFor = {
   open: 'live',
@@ -16,12 +27,47 @@ const badgeVariantFor = {
   refunded: 'refunded',
 } as const;
 
-export default function MarketPage({ params }: { params: { id: string } }) {
-  const market = getMarketById(params.id);
-  if (!market) notFound();
+interface Loaded {
+  market: MockMarket;
+  bet: MockBet | null;
+  payout: MockPayout | null;
+  walletBalanceMicro: number;
+}
 
-  const yourBet = MOCK_BETS.find((b) => b.market_id === market.id && b.user_id === MOCK_USER.id) ?? null;
-  const yourPayout = yourBet ? MOCK_PAYOUTS.find((p) => p.bet_id === yourBet.id) ?? null : null;
+async function loadMarketPageData(id: string): Promise<Loaded | null> {
+  if (!supabaseConfigured) {
+    const market = getMarketById(id);
+    if (!market) return null;
+    const bet = MOCK_BETS.find((b) => b.market_id === market.id && b.user_id === MOCK_USER.id) ?? null;
+    const payout = bet ? MOCK_PAYOUTS.find((p) => p.bet_id === bet.id) ?? null : null;
+    return { market, bet, payout, walletBalanceMicro: MOCK_WALLET.balance_micro };
+  }
+  const supabase = getServerSupabase();
+  if (!supabase) return null;
+  const market = await getMarket(supabase, id);
+  if (!market) return null;
+
+  const { data: userData } = await supabase.auth.getUser();
+  const userId = userData.user?.id ?? null;
+
+  if (!userId) {
+    return { market, bet: null, payout: null, walletBalanceMicro: 0 };
+  }
+
+  const [bet, wallet] = await Promise.all([
+    getUserBetForMarket(supabase, userId, market.id),
+    getUserWallet(supabase, userId),
+  ]);
+  const payout = bet ? await getUserPayoutForBet(supabase, bet.id) : null;
+  if (bet) bet.symbol = market.symbol;
+
+  return { market, bet, payout, walletBalanceMicro: wallet.balance_micro };
+}
+
+export default async function MarketPage({ params }: { params: { id: string } }) {
+  const data = await loadMarketPageData(params.id);
+  if (!data) notFound();
+  const { market, bet: yourBet, payout: yourPayout, walletBalanceMicro } = data;
 
   return (
     <main className="flex flex-col gap-6">
@@ -78,7 +124,7 @@ export default function MarketPage({ params }: { params: { id: string } }) {
         <div className="flex flex-col gap-4">
           <BetForm
             market={market}
-            walletBalanceMicro={MOCK_WALLET.balance_micro}
+            walletBalanceMicro={walletBalanceMicro}
             disabled={market.status !== 'open'}
           />
           {market.status === 'resolved' && market.reopen_price && (

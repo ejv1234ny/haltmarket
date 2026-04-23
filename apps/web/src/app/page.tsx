@@ -1,10 +1,22 @@
 import { MarketCard } from '@/components/market-card';
 import { Card, CardContent } from '@/components/ui/card';
 import { listAllMarkets } from '@/lib/mocks/fixtures';
+import { listMarkets } from '@/lib/markets/queries';
 import { supabaseConfigured } from '@/lib/env';
+import { getServerSupabase } from '@/lib/supabase/server';
+import type { MockMarket } from '@/lib/mocks/types';
 
-export default function HomePage() {
-  const markets = listAllMarkets();
+export const dynamic = 'force-dynamic';
+
+async function loadMarkets(): Promise<MockMarket[]> {
+  if (!supabaseConfigured) return listAllMarkets();
+  const supabase = getServerSupabase();
+  if (!supabase) return listAllMarkets();
+  return listMarkets(supabase);
+}
+
+export default async function HomePage() {
+  const markets = await loadMarkets();
   const open = markets.filter((m) => m.status === 'open');
   const locked = markets.filter((m) => m.status === 'locked');
   const resolved = markets.filter((m) => m.status === 'resolved' || m.status === 'refunded');
@@ -20,7 +32,7 @@ export default function HomePage() {
           <Card className="mt-2 border-amber-700/40 bg-amber-950/20">
             <CardContent className="p-4 text-xs text-amber-200">
               Running on mocked data. Set <code className="font-mono">NEXT_PUBLIC_SUPABASE_URL</code> and{' '}
-              <code className="font-mono">NEXT_PUBLIC_SUPABASE_ANON_KEY</code> to wire real markets once Phase 3 ships.
+              <code className="font-mono">NEXT_PUBLIC_SUPABASE_ANON_KEY</code> to wire live markets.
             </CardContent>
           </Card>
         )}
