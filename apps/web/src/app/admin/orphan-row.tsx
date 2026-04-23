@@ -4,7 +4,7 @@ import { useState, useTransition } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { formatUsd } from '@/lib/format';
-import { rescueOrphanAction } from './actions';
+import { ignoreOrphanAction, rescueOrphanAction } from './actions';
 
 interface Row {
   id: string;
@@ -17,8 +17,9 @@ interface Row {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function OrphanRow({ row }: { row: Row }) {
-  const [mode, setMode] = useState<'idle' | 'bind'>('idle');
+  const [mode, setMode] = useState<'idle' | 'bind' | 'ignore'>('idle');
   const [userId, setUserId] = useState('');
+  const [reason, setReason] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -31,6 +32,20 @@ export function OrphanRow({ row }: { row: Row }) {
     setError(null);
     startTransition(async () => {
       const res = await rescueOrphanAction(row.id, userId);
+      if (!res.ok) setError(res.error ?? 'failed');
+      else setMode('idle');
+    });
+  }
+
+  function submitIgnore(e: React.FormEvent) {
+    e.preventDefault();
+    if (reason.trim().length < 3) {
+      setError('reason required (>=3 chars)');
+      return;
+    }
+    setError(null);
+    startTransition(async () => {
+      const res = await ignoreOrphanAction(row.id, reason);
       if (!res.ok) setError(res.error ?? 'failed');
       else setMode('idle');
     });
@@ -49,11 +64,17 @@ export function OrphanRow({ row }: { row: Row }) {
         {Math.floor(row.age_seconds / 60)}m
       </td>
       <td className="px-3 py-2">
-        {mode === 'idle' ? (
-          <Button size="sm" variant="primary" onClick={() => setMode('bind')}>
-            Bind + credit
-          </Button>
-        ) : (
+        {mode === 'idle' && (
+          <div className="flex gap-2">
+            <Button size="sm" variant="primary" onClick={() => setMode('bind')}>
+              Bind + credit
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setMode('ignore')}>
+              Ignore
+            </Button>
+          </div>
+        )}
+        {mode === 'bind' && (
           <form onSubmit={submit} className="flex flex-col gap-2">
             <Input
               value={userId}
@@ -64,6 +85,29 @@ export function OrphanRow({ row }: { row: Row }) {
             <div className="flex gap-2">
               <Button size="sm" type="submit" disabled={pending}>
                 {pending ? '…' : 'Confirm'}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                type="button"
+                onClick={() => setMode('idle')}
+              >
+                Cancel
+              </Button>
+            </div>
+          </form>
+        )}
+        {mode === 'ignore' && (
+          <form onSubmit={submitIgnore} className="flex flex-col gap-2">
+            <Input
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="why ignore?"
+              className="text-xs"
+            />
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" type="submit" disabled={pending}>
+                {pending ? '…' : 'Ignore'}
               </Button>
               <Button
                 size="sm"

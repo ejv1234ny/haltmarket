@@ -82,3 +82,48 @@ export async function rescueOrphanAction(
   revalidatePath('/admin');
   return { ok: true };
 }
+
+export async function setUserAdminAction(
+  userId: string,
+  isAdmin: boolean,
+): Promise<ActionResult> {
+  const supabase = getServerSupabase();
+  if (!supabase) return { ok: false, error: 'supabase not configured' };
+  const { error } = await (supabase.rpc as unknown as RpcFn)(
+    'admin_set_user_admin',
+    { p_user_id: userId, p_is_admin: isAdmin },
+  );
+  if (error) return { ok: false, error: error.message };
+  revalidatePath('/admin/users');
+  return { ok: true };
+}
+
+export async function ignoreOrphanAction(
+  orphanId: string,
+  reason: string,
+): Promise<ActionResult> {
+  const supabase = getServerSupabase();
+  if (!supabase) return { ok: false, error: 'supabase not configured' };
+  const { error } = await (supabase.rpc as unknown as RpcFn)(
+    'admin_ignore_orphan_deposit',
+    { p_orphan_id: orphanId, p_reason: reason },
+  );
+  if (error) return { ok: false, error: error.message };
+  revalidatePath('/admin');
+  return { ok: true };
+}
+
+export async function overrideKycAction(
+  userId: string,
+  status: 'none' | 'pending' | 'approved' | 'rejected',
+): Promise<ActionResult> {
+  const supabase = getServerSupabase();
+  if (!supabase) return { ok: false, error: 'supabase not configured' };
+  const { error } = await (supabase.rpc as unknown as RpcFn)(
+    'admin_override_kyc',
+    { p_user_id: userId, p_status: status },
+  );
+  if (error) return { ok: false, error: error.message };
+  revalidatePath('/admin/users');
+  return { ok: true };
+}

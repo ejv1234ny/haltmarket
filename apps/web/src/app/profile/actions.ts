@@ -54,3 +54,31 @@ export async function setHandleAction(handle: string): Promise<ProfileActionResu
   revalidatePath('/leaderboard');
   return { ok: true };
 }
+
+export async function setEmailNotifyAction(
+  enabled: boolean,
+): Promise<ProfileActionResult> {
+  const supabase = getServerSupabase();
+  if (!supabase) return { ok: false, error: 'internal_error', message: 'supabase not configured' };
+  const { data: userData } = await supabase.auth.getUser();
+  const user = userData.user;
+  if (!user) return { ok: false, error: 'unauthorized', message: 'sign in first' };
+
+  const { error } = await (
+    supabase.from('user_profiles') as unknown as {
+      upsert: (
+        row: Record<string, unknown>,
+        opts: { onConflict: string },
+      ) => Promise<{ error: { message: string; code?: string } | null }>;
+    }
+  ).upsert(
+    { user_id: user.id, notify_email_on_halt: enabled, updated_at: new Date().toISOString() },
+    { onConflict: 'user_id' },
+  );
+  if (error) {
+    console.error('setEmailNotifyAction error', error);
+    return { ok: false, error: 'internal_error', message: error.message };
+  }
+  revalidatePath('/profile');
+  return { ok: true };
+}

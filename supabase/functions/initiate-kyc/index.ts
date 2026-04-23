@@ -48,6 +48,131 @@ function isStatus(s: unknown): s is Status {
   return s === 'none' || s === 'pending' || s === 'approved' || s === 'rejected';
 }
 
+// -----------------------------------------------------------------------------
+// Persona vendor parser
+//
+// Webhook docs: https://docs.withpersona.com/docs/webhooks
+//
+// Signature header format: `Persona-Signature: t=<ts>,v1=<hex_hmac>`
+// HMAC-SHA256 over "<ts>.<raw_body>" with KYC_WEBHOOK_SECRET.
+// Reject timestamps older than 5 minutes to defeat replay.
+//
+// Payload: data.attributes.payload.data.attributes carries the inquiry's
+// status + reference-id. Reference-id is what we set when creating the
+// inquiry — populate it with the Supabase user_id.
+// -----------------------------------------------------------------------------
+
+const PERSONA_SIG_RE = /^t=(\d+),v1=([0-9a-f]+)$/i;
+const MAX_WEBHOOK_SKEW_SECONDS = 300;
+
+async function hmacHex(key: string, message: string): Promise<string> {
+  const enc = new TextEncoder();
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(key),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const sig = await crypto.subtle.sign('HMAC', cryptoKey, enc.encode(message));
+  return Array.from(new Uint8Array(sig))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function timingSafeEqualHex(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
+async function verifyPersonaSignature(
+  body: string,
+  header: string,
+  secret: string,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const match = PERSONA_SIG_RE.exec(header.trim());
+  if (!match) return { ok: false, reason: 'signature header malformed' };
+  const [, tsStr, signature] = match;
+  const ts = Number.parseInt(tsStr ?? '', 10);
+  if (!Number.isFinite(ts)) return { ok: false, reason: 'timestamp invalid' };
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (Math.abs(nowSec - ts) > MAX_WEBHOOK_SKEW_SECONDS) {
+    return { ok: false, reason: 'timestamp skew too large' };
+  }
+  const expected = await hmacHex(secret, `${ts}.${body}`);
+  if (!timingSafeEqualHex(expected, signature ?? '')) {
+    return { ok: false, reason: 'signature mismatch' };
+  }
+  return { ok: true };
+}
+
+function mapPersonaInquiryStatus(s: unknown): Status | null {
+  if (typeof s !== 'string') return null;
+  const normalized = s.toLowerCase();
+  // Persona inquiry statuses include: created, pending, expired, completed,
+  // approved, declined, needs_review. Map per our 4-value vocabulary.
+  if (normalized === 'approved') return 'approved';
+  if (normalized === 'declined' || normalized === 'failed') return 'rejected';
+  if (normalized === 'completed' || normalized === 'needs_review') return 'pending';
+  if (normalized === 'pending' || normalized === 'created') return 'pending';
+  if (normalized === 'expired') return 'rejected';
+  return null;
+}
+
+function parsePersonaPayload(raw: unknown):
+  | { ok: true; value: Decision }
+  | { ok: false; message: string } {
+  if (typeof raw !== 'object' || raw === null) {
+    return { ok: false, message: 'body not an object' };
+  }
+  const root = raw as Record<string, unknown>;
+  const data = root.data as Record<string, unknown> | undefined;
+  const outer = data?.attributes as Record<string, unknown> | undefined;
+  const payload = outer?.payload as Record<string, unknown> | undefined;
+  const inner = payload?.data as Record<string, unknown> | undefined;
+  const attrs = inner?.attributes as Record<string, unknown> | undefined;
+  if (!attrs) {
+    return { ok: false, message: 'missing data.attributes.payload.data.attributes' };
+  }
+
+  const referenceId = attrs['reference-id'] ?? attrs['referenceId'];
+  if (!isUuid(referenceId)) {
+    return {
+      ok: false,
+      message: 'reference-id must be the Supabase user_id UUID',
+    };
+  }
+
+  const status = mapPersonaInquiryStatus(attrs.status);
+  if (!status) {
+    return { ok: false, message: `unsupported inquiry status: ${String(attrs.status)}` };
+  }
+
+  // Country hints live under attributes.countries or attributes.fields.country.
+  const geoRaw =
+    (attrs.country_code as string | undefined) ??
+    (attrs['country-code'] as string | undefined);
+  const geoCountry =
+    typeof geoRaw === 'string' && /^[a-zA-Z]{2}$/.test(geoRaw)
+      ? geoRaw.toUpperCase()
+      : undefined;
+
+  return {
+    ok: true,
+    value: {
+      userId: referenceId as string,
+      status,
+      geoCountry: geoCountry ?? null,
+      provider: 'persona',
+      reference: typeof inner.id === 'string' ? (inner.id as string) : undefined,
+    },
+  };
+}
+
 function parseStubPayload(raw: unknown):
   | { ok: true; value: Decision }
   | { ok: false; message: string } {
@@ -111,10 +236,23 @@ function parseStubPayload(raw: unknown):
       return json(400, { error: 'invalid_json' });
     }
     parsed = parseStubPayload(body);
+  } else if (vendor === 'persona') {
+    const secret = env?.get('KYC_WEBHOOK_SECRET') ?? '';
+    if (!secret) return json(500, { error: 'webhook_secret_missing' });
+    const rawBody = await req.text();
+    const sigHeader = req.headers.get('persona-signature') ?? '';
+    const verify = await verifyPersonaSignature(rawBody, sigHeader, secret);
+    if (!verify.ok) return json(401, { error: 'bad_signature', message: verify.reason });
+
+    let body: unknown;
+    try {
+      body = JSON.parse(rawBody);
+    } catch {
+      return json(400, { error: 'invalid_json' });
+    }
+    parsed = parsePersonaPayload(body);
   } else {
-    // Real-vendor branch: implement per KYC_VENDOR.
-    //   * Persona: verify HMAC of raw body with KYC_WEBHOOK_SECRET via the
-    //     `Persona-Signature` header, parse payload.data.attributes.status.
+    // Sumsub + Stripe Identity wire-up lands once those vendors are chosen.
     //   * Sumsub: verify `X-Payload-Digest` HMAC, parse applicantId → user_id
     //     via your own applicant-id map, reviewStatus → status.
     //   * Stripe Identity: stripe.webhooks.constructEvent on raw body, then
