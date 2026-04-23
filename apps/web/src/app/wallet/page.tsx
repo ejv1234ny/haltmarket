@@ -1,54 +1,100 @@
-import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { WalletBalance } from '@/components/wallet-balance';
+import { DepositCard } from '@/components/wallet/deposit-card';
+import { WithdrawCard } from '@/components/wallet/withdraw-card';
 import { formatUsd } from '@/lib/format';
 import { MOCK_LEDGER, MOCK_USER, MOCK_WALLET } from '@/lib/mocks/fixtures';
 import { supabaseConfigured } from '@/lib/env';
 import { getServerSupabase } from '@/lib/supabase/server';
-import { getUserWallet, listLedgerEntries } from '@/lib/markets/queries';
+import {
+  getUserWallet,
+  getUserWalletAddress,
+  listLedgerEntries,
+  listUserDeposits,
+  listUserWithdrawals,
+  type DepositRow,
+  type WithdrawalRow,
+} from '@/lib/markets/queries';
 import type { MockLedgerEntry, MockWallet } from '@/lib/mocks/types';
 
 export const dynamic = 'force-dynamic';
 
-async function loadWallet(): Promise<{
+interface Loaded {
   wallet: MockWallet;
   ledger: MockLedgerEntry[];
+  deposits: DepositRow[];
+  withdrawals: WithdrawalRow[];
+  depositAddress: string | null;
   signedIn: boolean;
-}> {
+}
+
+async function loadWallet(): Promise<Loaded> {
   if (!supabaseConfigured) {
-    return { wallet: MOCK_WALLET, ledger: MOCK_LEDGER, signedIn: true };
+    return {
+      wallet: MOCK_WALLET,
+      ledger: MOCK_LEDGER,
+      deposits: [],
+      withdrawals: [],
+      depositAddress: null,
+      signedIn: true,
+    };
   }
   const supabase = getServerSupabase();
   if (!supabase) {
-    return { wallet: { user_id: '', currency: 'USDC', balance_micro: 0 }, ledger: [], signedIn: false };
+    return {
+      wallet: { user_id: '', currency: 'USDC', balance_micro: 0 },
+      ledger: [],
+      deposits: [],
+      withdrawals: [],
+      depositAddress: null,
+      signedIn: false,
+    };
   }
   const { data: userData } = await supabase.auth.getUser();
   const userId = userData.user?.id;
   if (!userId) {
-    return { wallet: { user_id: '', currency: 'USDC', balance_micro: 0 }, ledger: [], signedIn: false };
+    return {
+      wallet: { user_id: '', currency: 'USDC', balance_micro: 0 },
+      ledger: [],
+      deposits: [],
+      withdrawals: [],
+      depositAddress: null,
+      signedIn: false,
+    };
   }
-  const [wallet, ledger] = await Promise.all([
+  const [wallet, ledger, deposits, withdrawals, walletAddress] = await Promise.all([
     getUserWallet(supabase, userId),
     listLedgerEntries(supabase, userId),
+    listUserDeposits(supabase, userId),
+    listUserWithdrawals(supabase, userId),
+    getUserWalletAddress(supabase, userId),
   ]);
-  return { wallet, ledger, signedIn: true };
+  return {
+    wallet,
+    ledger,
+    deposits,
+    withdrawals,
+    depositAddress: walletAddress?.address ?? null,
+    signedIn: true,
+  };
 }
 
 export default async function WalletPage() {
-  const { wallet, ledger, signedIn } = await loadWallet();
+  const { wallet, ledger, deposits, withdrawals, depositAddress, signedIn } =
+    await loadWallet();
   const userId = signedIn ? wallet.user_id || MOCK_USER.id : MOCK_USER.id;
 
   return (
     <main className="flex flex-col gap-6">
       <header className="flex flex-col gap-2">
         <h1 className="font-mono text-3xl font-bold tracking-tight">Wallet</h1>
-        <p className="text-sm text-neutral-400">USDC balance, recent ledger entries, and deposit controls.</p>
+        <p className="text-sm text-neutral-400">USDC balance, deposits, withdrawals, and ledger history.</p>
       </header>
 
       {!signedIn && (
         <Card className="border-amber-700/40 bg-amber-950/20">
           <CardContent className="p-4 text-xs text-amber-200">
-            Sign in to see your wallet balance and ledger history.
+            Sign in to see your wallet balance, deposits, and withdrawals.
           </CardContent>
         </Card>
       )}
@@ -57,19 +103,17 @@ export default async function WalletPage() {
         <CardHeader>
           <CardTitle className="text-sm uppercase tracking-wide text-neutral-400">Available balance</CardTitle>
         </CardHeader>
-        <CardContent className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <CardContent>
           <WalletBalance userId={userId} initialMicro={wallet.balance_micro} />
-          <div className="flex gap-2">
-            {/* Deposit / withdrawal land in a follow-up; alpha runs on play balance. */}
-            <Button variant="primary" disabled>
-              Deposit (coming soon)
-            </Button>
-            <Button variant="outline" disabled>
-              Withdraw (coming soon)
-            </Button>
-          </div>
         </CardContent>
       </Card>
+
+      {signedIn && (
+        <div className="grid gap-6 md:grid-cols-2">
+          <DepositCard address={depositAddress} deposits={deposits} />
+          <WithdrawCard walletBalanceMicro={wallet.balance_micro} withdrawals={withdrawals} />
+        </div>
+      )}
 
       <Card>
         <CardHeader>

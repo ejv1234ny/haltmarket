@@ -32,20 +32,28 @@ What's left is infra, credentials, legal, and ops configuration that only a huma
 - [x ] Point `haltmarket.com` → Vercel deployment (DNS A/AAAA to `76.76.21.21` or CNAME per Vercel docs).
 - [ ] From the Vercel project's **Tokens** section (or account-level), create a deploy token → save as `VERCEL_TOKEN` in GitHub repo secrets. Also add `VERCEL_ORG_ID` and `VERCEL_PROJECT_ID` from Vercel project settings.
 
-## 3. Railway (monitor + resolver workers)
+## 3. Railway (monitor + resolver + deposit-watcher workers)
 
 - [ ] Create a Railway project.
-- [ ] Create two services:
+- [ ] Create three services:
   - `haltmarket-monitor` — Root Directory `apps/monitor`, Dockerfile auto-detected
   - `haltmarket-resolver` — Root Directory `apps/resolver`, Dockerfile auto-detected
+  - `haltmarket-deposit-watcher` — Root Directory `apps/deposit-watcher`, Dockerfile auto-detected
 - [ ] Each service needs these env vars (set in Railway UI):
-  - `DATABASE_URL` (Supabase → Settings → Database → Connection string → URI; use the **session pooler** port 5432 with SSL)
-  - `POLYGON_API_KEY` (Polygon.io paid tier — `/v3/trades/{symbol}` requires at least Launchpad)
-  - `DISCORD_WEBHOOK_URL` (Discord channel → Edit Channel → Integrations → Webhooks)
-  - Monitor only: `MONITOR_METRICS_PORT=8080`
-  - Resolver only: `RESOLVER_METRICS_PORT=8081`
+  - **Monitor + Resolver:**
+    - `DATABASE_URL` (Supabase → Settings → Database → Connection string → URI; use the **session pooler** port 5432 with SSL)
+    - `POLYGON_API_KEY` (Polygon.io paid tier — `/v3/trades/{symbol}` requires at least Launchpad)
+    - `DISCORD_WEBHOOK_URL` (Discord channel → Edit Channel → Integrations → Webhooks)
+    - Monitor only: `MONITOR_METRICS_PORT=8080`
+    - Resolver only: `RESOLVER_METRICS_PORT=8081`
+  - **Deposit-watcher:**
+    - `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` (for `credit_crypto_deposit` RPC)
+    - `ALCHEMY_SIGNING_KEY` (from Alchemy Notify dashboard — see Section 8)
+    - `HOT_WALLET_ADDRESS` — the Safe hot-wallet address watched by Alchemy
+    - `USDC_BASE_ADDRESS=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`
+    - `DISCORD_WEBHOOK_URL` (shared)
 - [ ] Generate a Railway deploy token → save as `RAILWAY_TOKEN` in GitHub repo secrets.
-- [ ] In Railway, enable the services' public domains only if you want external access to `/metrics` and `/healthz` (not required).
+- [ ] In Railway, enable the deposit-watcher's public domain so Alchemy can reach `/webhooks/alchemy`.
 
 ## 4. GitHub repo configuration
 
@@ -90,20 +98,57 @@ These are **hard blockers** for real-money alpha but can be skipped for a play-m
 - [ ] CFTC preliminary approval scope — confirm which products are in-scope for this alpha.
 - [ ] Responsible gambling resources / self-exclusion UI (if applicable in your jurisdictions).
 
-## 8. Seed + verify
+## 8. Crypto rail
+
+- [ ] Migration `0008_crypto_rail.sql` applied via `supabase db push` (plus `0009_register_wallet_address.sql` for Privy, `0010_admin.sql` for admin RPCs).
+- [ ] Safe hot + cold wallets created on Base via https://app.safe.global.
+  - Hot: 2-of-3 signers (founder + 2 trusted), funded with ~0.01 ETH gas.
+  - Cold: 2-of-3 signers (at least one hardware-wallet), unfunded.
+- [ ] `HOT_WALLET_ADDRESS` and `COLD_WALLET_ADDRESS` set in all relevant service env vars (Vercel for web, Railway for deposit-watcher + reconcile edge function secrets).
+- [ ] Alchemy app created on Base Mainnet at https://dashboard.alchemy.com.
+  - Notify → Create Webhook → Address Activity → Base Mainnet → addresses: hot Safe → filter: Token Transfers, USDC only.
+  - Webhook URL: `https://<railway-deposit-watcher>.up.railway.app/webhooks/alchemy`.
+- [ ] `ALCHEMY_SIGNING_KEY` set in Railway for the deposit-watcher service.
+- [ ] Privy account created at https://dashboard.privy.io.
+  - App ID → `NEXT_PUBLIC_PRIVY_APP_ID` in Vercel.
+  - App secret → `PRIVY_APP_SECRET` in Vercel.
+  - Configure login methods: email + google. Embedded wallets: Base.
+- [ ] Reconciliation edge function secrets set via CLI:
+  ```bash
+  supabase secrets set HOT_WALLET_ADDRESS=0x... COLD_WALLET_ADDRESS=0x... \
+    BASE_RPC_URL=https://mainnet.base.org \
+    DISCORD_WEBHOOK_URL=... \
+    RECONCILE_KEY=$(openssl rand -hex 32) \
+    --project-ref sqjdfafewyphoroaivqq
+  ```
+- [ ] Schedule `reconcile-crypto` hourly. Supabase dashboard → Database → Cron Jobs:
+  ```sql
+  select cron.schedule(
+    'reconcile-crypto',
+    '0 * * * *',
+    $$ select net.http_post(
+         url := 'https://sqjdfafewyphoroaivqq.supabase.co/functions/v1/reconcile-crypto',
+         headers := '{"x-reconcile-key":"<your RECONCILE_KEY>"}'::jsonb) $$);
+  ```
+- [ ] Grant yourself admin: `update public.user_profiles set is_admin = true where user_id = '<your-uuid>';`.
+- [ ] Smoke test deposit: from a mapped wallet, send 0.01 USDC → observe `deposits` row + ledger credit + `ledger_global_sum()=0`.
+- [ ] Smoke test withdrawal: request $5 → admin `/admin` marks paid with a real tx hash → observe `withdrawals.status='confirmed'` + ledger balance restored.
+- [ ] Reconciliation job runs hourly and posts to Discord on drift > $1.
+
+## 9. Seed + verify
 
 Once the above is done:
 
 - [ ] Push to `main`. Watch Actions → `deploy` workflow complete green.
-- [ ] In Supabase SQL editor, verify migrations 0001–0007 landed: `select version, name from supabase_migrations.schema_migrations order by version;`
-- [ ] In Supabase Functions, verify `place-bet`, `lock-due-markets`, `check-ledger-invariants` are all deployed.
-- [ ] In Railway, both services show "Active" with healthy `/healthz`.
+- [ ] In Supabase SQL editor, verify migrations 0001–0010 landed: `select version, name from supabase_migrations.schema_migrations order by version;`
+- [ ] In Supabase Functions, verify `place-bet`, `lock-due-markets`, `check-ledger-invariants`, `request-withdrawal`, `reconcile-crypto` are all deployed.
+- [ ] In Railway, all three services show "Active" with healthy `/healthz`.
 - [ ] Hit `https://haltmarket.com/` — should show "No active halts right now" when market is quiet.
 - [ ] Sign in via magic link — verify a `user_profiles` row appears once you set a handle (needs a profile flow — this UI is a gap; for now operators can `insert` directly).
 - [ ] Manually approve your own user's KYC for testing: `update user_profiles set kyc_status='approved' where user_id='<your-uuid>';`.
 - [ ] During market hours, wait for the first LUDP halt, verify the market appears, place a $10 test bet, watch it resolve.
 
-## 9. Observability before traffic
+## 10. Observability before traffic
 
 - [ ] Configure Grafana Cloud (or equivalent) to scrape `/metrics` from both Railway services. Key metrics:
   - `haltmarket_monitor_halts_total`
@@ -116,11 +161,11 @@ Once the above is done:
 These items exist but are NOT blockers:
 
 - Web Push (Phase 6 — VAPID keys, service worker)
-- Deposit/withdrawal (Phase 8 — Stub Provider → Circle/Coinbase)
-- Admin panel (Phase 9 — operator tools)
 - End-to-end integration harness (Phase 10)
-- Profile/handle setup UI (currently ops must insert rows manually)
+- Profile/handle setup UI (currently ops must insert rows manually; admins can run `update user_profiles set handle='...' where user_id='...'`)
 - Realtime wallet balance updates (wallet refreshes on page nav only)
+- Orphan-deposit admin UI (currently orphan sends raise H0014 in watcher logs; ops must `insert into user_wallet_addresses` + re-trigger the webhook)
+- Auto-signer for Safe withdrawals (alpha requires manual Safe execution)
 
 ---
 

@@ -396,6 +396,96 @@ export async function getLeaderboard(
   }));
 }
 
+export interface DepositRow {
+  id: string;
+  amount_micro: number;
+  status: string;
+  tx_hash: string | null;
+  created_at: string;
+}
+
+export interface WithdrawalRow {
+  id: string;
+  amount_micro: number;
+  status: string;
+  destination_address: string | null;
+  tx_hash: string | null;
+  created_at: string;
+}
+
+export interface WalletAddressRow {
+  id: string;
+  chain_id: number;
+  address: string;
+  source: string;
+}
+
+export async function getUserWalletAddress(
+  supabase: SupabaseClient,
+  userId: string,
+  chainId = 8453,
+  source = 'privy',
+): Promise<WalletAddressRow | null> {
+  const { data, error } = await supabase
+    .from('user_wallet_addresses')
+    .select('id, chain_id, address, source')
+    .eq('user_id', userId)
+    .eq('chain_id', chainId)
+    .eq('source', source)
+    .maybeSingle();
+  if (error || !data) return null;
+  return data as WalletAddressRow;
+}
+
+export async function listUserDeposits(
+  supabase: SupabaseClient,
+  userId: string,
+  limit = 10,
+): Promise<DepositRow[]> {
+  const { data, error } = await supabase
+    .from('deposits')
+    .select('id, amount_micro, status, tx_hash, created_at')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) {
+    console.error('listUserDeposits error', error);
+    return [];
+  }
+  return (data ?? []).map((r) => ({
+    id: String(r.id),
+    amount_micro: Number(r.amount_micro),
+    status: String(r.status),
+    tx_hash: r.tx_hash ? String(r.tx_hash) : null,
+    created_at: String(r.created_at),
+  }));
+}
+
+export async function listUserWithdrawals(
+  supabase: SupabaseClient,
+  userId: string,
+  limit = 10,
+): Promise<WithdrawalRow[]> {
+  const { data, error } = await supabase
+    .from('withdrawals')
+    .select('id, amount_micro, status, destination_address, tx_hash, created_at')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) {
+    console.error('listUserWithdrawals error', error);
+    return [];
+  }
+  return (data ?? []).map((r) => ({
+    id: String(r.id),
+    amount_micro: Number(r.amount_micro),
+    status: String(r.status),
+    destination_address: r.destination_address ? String(r.destination_address) : null,
+    tx_hash: r.tx_hash ? String(r.tx_hash) : null,
+    created_at: String(r.created_at),
+  }));
+}
+
 export async function getUserPayoutForBet(
   supabase: SupabaseClient,
   betId: string,
