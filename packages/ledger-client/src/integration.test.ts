@@ -54,17 +54,16 @@ describeIfDb('ledger integration (post_transfer)', () => {
 
   beforeAll(async () => {
     pool = new pg.Pool({ connectionString: DATABASE_URL });
-    // Seed a handful of auth.users rows.
+    // Seed a handful of auth.users rows. Always insert — the prior
+    // "skip when table already has rows" shortcut broke once sibling
+    // integration files started populating auth.users before this one
+    // runs. Each run generates fresh UUIDs so there's nothing to conflict
+    // on, but use ON CONFLICT as belt + suspenders.
     userIds = Array.from({ length: 8 }, () => randomUUID());
-    const { rows: existing } = await pool.query<{ id: string }>(
-      'select id from auth.users',
+    await pool.query(
+      'insert into auth.users (id) select unnest($1::uuid[]) on conflict (id) do nothing',
+      [userIds],
     );
-    if (existing.length < userIds.length) {
-      await pool.query(
-        'insert into auth.users (id) select unnest($1::uuid[])',
-        [userIds],
-      );
-    }
     // Seed each user with $1000 so bet/withdrawal tests have balance to spend.
     const client = createLedgerClient(buildRpc(pool));
     for (const uid of userIds) {

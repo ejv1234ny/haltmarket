@@ -27,10 +27,12 @@ async function asJwtUser<T>(
   try {
     await client.query('begin');
     await client.query(`set local role authenticated`);
-    await client.query(
-      `set local "request.jwt.claims" = $1`,
-      [JSON.stringify({ sub: userId, role: 'authenticated' })],
-    );
+    // SET LOCAL does not accept parameterized placeholders — use set_config,
+    // which is a regular function so pg's protocol-level parameters work.
+    // Third arg `true` = is_local (rolled back at commit/rollback).
+    await client.query(`select set_config('request.jwt.claims', $1, true)`, [
+      JSON.stringify({ sub: userId, role: 'authenticated' }),
+    ]);
     const result = await fn(client);
     await client.query('commit');
     return result;
