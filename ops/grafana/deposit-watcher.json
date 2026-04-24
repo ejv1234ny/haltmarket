@@ -1,0 +1,84 @@
+{
+  "title": "haltmarket — deposit-watcher",
+  "uid": "haltmarket-deposit-watcher",
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "editable": true,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "tags": ["haltmarket", "crypto"],
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": { "text": "prometheus", "value": "prometheus" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Up",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "targets": [
+        { "expr": "up{service=\"deposit-watcher\"}", "refId": "A" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "down", "color": "red" } } },
+            { "type": "value", "options": { "1": { "text": "up", "color": "green" } } }
+          ]
+        }
+      },
+      "options": { "colorMode": "background" }
+    },
+    {
+      "id": 2,
+      "title": "Deposits credited / hr",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 4, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "targets": [
+        { "expr": "rate(haltmarket_deposits_credited_total[10m]) * 3600", "refId": "A", "legendFormat": "{{status}}" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Webhook rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "targets": [
+        { "expr": "rate(haltmarket_alchemy_webhooks_total[5m])", "refId": "A", "legendFormat": "{{outcome}}" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "credit_crypto_deposit latency (ms)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "targets": [
+        { "expr": "histogram_quantile(0.5, rate(haltmarket_rpc_latency_ms_bucket[5m]))", "refId": "A", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, rate(haltmarket_rpc_latency_ms_bucket[5m]))", "refId": "B", "legendFormat": "p95" },
+        { "expr": "histogram_quantile(0.99, rate(haltmarket_rpc_latency_ms_bucket[5m]))", "refId": "C", "legendFormat": "p99" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Rejections breakdown",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "targets": [
+        { "expr": "rate(haltmarket_deposits_credited_total{status=\"rejected\"}[10m])", "refId": "A", "legendFormat": "rejected/s" },
+        { "expr": "rate(haltmarket_deposits_credited_total{status=\"errored\"}[10m])", "refId": "B", "legendFormat": "errored/s" }
+      ]
+    }
+  ]
+}

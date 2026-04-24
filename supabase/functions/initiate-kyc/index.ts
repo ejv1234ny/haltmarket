@@ -1,81 +1,41 @@
-// initiate-kyc — Phase 7 KYC callback receiver (skeleton).
+// initiate-kyc — Phase 7 KYC callback receiver.
 //
 // Accepts a POST from a KYC vendor's webhook after identity verification.
-// Verifies the vendor signature, then forwards the decision to
-// public.apply_kyc_decision so `user_profiles.kyc_status` flips to
+// Verifies the vendor signature (per vendor), then forwards the decision
+// to public.apply_kyc_decision so `user_profiles.kyc_status` flips to
 // 'approved' / 'rejected' / 'pending'. The compliance gate in place_bet
 // reads that column — flipping it is all the alpha rail needs.
 //
-// Vendor-agnostic skeleton: the vendor-specific field names are behind a
-// small parser. Wire a real vendor by:
-//   1. Setting KYC_VENDOR = 'persona' | 'sumsub' | 'stripe'
-//   2. Setting KYC_WEBHOOK_SECRET = the vendor's signing secret
-//   3. Filling in the parseVendorPayload branch for that vendor
+// Pure parser + signature helpers live in `../_shared/kyc-parsers.ts` so
+// vitest can unit-test them from Node without Deno runtime.
 //
-// Until those are set this endpoint operates in 'stub' mode: accepts a
-// plain JSON body { user_id, status, geo_country? } protected by a shared
-// bearer token (KYC_STUB_BEARER) so ops can simulate vendor callbacks in
-// dev without wiring a real integration. Stub mode is never enabled in
-// prod — guard it behind KYC_VENDOR=stub.
+// Vendors wired: stub (dev-only bearer auth), persona, sumsub, stripe.
+// Select via KYC_VENDOR env var. All share KYC_WEBHOOK_SECRET for the
+// signing-secret input.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
+import {
+  hmacHex,
+  parsePersonaPayload,
+  parseStripeIdentityPayload,
+  parseStubPayload,
+  parseSumsubPayload,
+  timingSafeEqualHex,
+  verifyPersonaSignature,
+  verifyStripeSignature,
+  verifySumsubSignature,
+  type Decision,
+  type ParseResult,
+} from '../_shared/kyc-parsers.ts';
 
-type Status = 'none' | 'pending' | 'approved' | 'rejected';
-
-interface Decision {
-  userId: string;
-  status: Status;
-  geoCountry?: string | null;
-  provider: string;
-  reference?: string;
-}
+void hmacHex;
+void timingSafeEqualHex;
 
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: { 'content-type': 'application/json' },
   });
-}
-
-function isUuid(s: unknown): s is string {
-  return (
-    typeof s === 'string' &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)
-  );
-}
-
-function isStatus(s: unknown): s is Status {
-  return s === 'none' || s === 'pending' || s === 'approved' || s === 'rejected';
-}
-
-function parseStubPayload(raw: unknown):
-  | { ok: true; value: Decision }
-  | { ok: false; message: string } {
-  if (typeof raw !== 'object' || raw === null) {
-    return { ok: false, message: 'body must be JSON object' };
-  }
-  const r = raw as Record<string, unknown>;
-  const userId = r.user_id;
-  const status = r.status;
-  if (!isUuid(userId)) return { ok: false, message: 'user_id must be UUID' };
-  if (!isStatus(status)) {
-    return { ok: false, message: 'status must be none|pending|approved|rejected' };
-  }
-  const geoRaw = r.geo_country;
-  const geoCountry =
-    typeof geoRaw === 'string' && /^[a-zA-Z]{2}$/.test(geoRaw)
-      ? geoRaw.toUpperCase()
-      : undefined;
-  return {
-    ok: true,
-    value: {
-      userId,
-      status,
-      geoCountry: geoCountry ?? null,
-      provider: 'stub',
-      reference: typeof r.reference === 'string' ? r.reference : undefined,
-    },
-  };
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -93,7 +53,7 @@ function parseStubPayload(raw: unknown):
     return json(500, { error: 'misconfigured' });
   }
 
-  let parsed: { ok: true; value: Decision } | { ok: false; message: string };
+  let parsed: ParseResult;
 
   if (vendor === 'stub') {
     // Stub mode: require a shared bearer token. Intended for dev + tests.
@@ -111,14 +71,53 @@ function parseStubPayload(raw: unknown):
       return json(400, { error: 'invalid_json' });
     }
     parsed = parseStubPayload(body);
+  } else if (vendor === 'persona') {
+    const secret = env?.get('KYC_WEBHOOK_SECRET') ?? '';
+    if (!secret) return json(500, { error: 'webhook_secret_missing' });
+    const rawBody = await req.text();
+    const sigHeader = req.headers.get('persona-signature') ?? '';
+    const verify = await verifyPersonaSignature(rawBody, sigHeader, secret);
+    if (!verify.ok) return json(401, { error: 'bad_signature', message: verify.reason });
+
+    let body: unknown;
+    try {
+      body = JSON.parse(rawBody);
+    } catch {
+      return json(400, { error: 'invalid_json' });
+    }
+    parsed = parsePersonaPayload(body);
+  } else if (vendor === 'sumsub') {
+    const secret = env?.get('KYC_WEBHOOK_SECRET') ?? '';
+    if (!secret) return json(500, { error: 'webhook_secret_missing' });
+    const rawBody = await req.text();
+    const digest = req.headers.get('x-payload-digest') ?? '';
+    const alg = req.headers.get('x-payload-digest-alg') ?? 'HMAC_SHA256_HEX';
+    const verify = await verifySumsubSignature(rawBody, digest, alg, secret);
+    if (!verify.ok) return json(401, { error: 'bad_signature', message: verify.reason });
+
+    let body: unknown;
+    try {
+      body = JSON.parse(rawBody);
+    } catch {
+      return json(400, { error: 'invalid_json' });
+    }
+    parsed = parseSumsubPayload(body);
+  } else if (vendor === 'stripe') {
+    const secret = env?.get('KYC_WEBHOOK_SECRET') ?? '';
+    if (!secret) return json(500, { error: 'webhook_secret_missing' });
+    const rawBody = await req.text();
+    const sigHeader = req.headers.get('stripe-signature') ?? '';
+    const verify = await verifyStripeSignature(rawBody, sigHeader, secret);
+    if (!verify.ok) return json(401, { error: 'bad_signature', message: verify.reason });
+
+    let body: unknown;
+    try {
+      body = JSON.parse(rawBody);
+    } catch {
+      return json(400, { error: 'invalid_json' });
+    }
+    parsed = parseStripeIdentityPayload(body);
   } else {
-    // Real-vendor branch: implement per KYC_VENDOR.
-    //   * Persona: verify HMAC of raw body with KYC_WEBHOOK_SECRET via the
-    //     `Persona-Signature` header, parse payload.data.attributes.status.
-    //   * Sumsub: verify `X-Payload-Digest` HMAC, parse applicantId → user_id
-    //     via your own applicant-id map, reviewStatus → status.
-    //   * Stripe Identity: stripe.webhooks.constructEvent on raw body, then
-    //     read `identity.verification_session.verified` or `.requires_input`.
     return json(501, {
       error: 'vendor_not_implemented',
       message: `KYC_VENDOR=${vendor} parser not wired yet; see initiate-kyc/index.ts`,
@@ -126,7 +125,7 @@ function parseStubPayload(raw: unknown):
   }
 
   if (!parsed.ok) return json(400, { error: 'invalid_input', message: parsed.message });
-  const d = parsed.value;
+  const d: Decision = parsed.value;
 
   const db = createClient(supabaseUrl, serviceKey, {
     auth: { persistSession: false },

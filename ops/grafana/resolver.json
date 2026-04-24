@@ -1,0 +1,109 @@
+{
+  "title": "haltmarket — resolver",
+  "uid": "haltmarket-resolver",
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "editable": true,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "tags": ["haltmarket", "resolver"],
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": { "text": "prometheus", "value": "prometheus" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Leader",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "targets": [
+        { "expr": "haltmarket_resolver_is_leader", "refId": "A" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "standby", "color": "orange" } } },
+            { "type": "value", "options": { "1": { "text": "leader", "color": "green" } } }
+          ]
+        }
+      },
+      "options": { "colorMode": "background" }
+    },
+    {
+      "id": 2,
+      "title": "Invariant failures (CRITICAL)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "targets": [
+        { "expr": "haltmarket_resolver_invariant_failures_total", "refId": "A" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        }
+      },
+      "options": { "colorMode": "background", "graphMode": "none" }
+    },
+    {
+      "id": 3,
+      "title": "Resolves / min",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 8, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "targets": [
+        { "expr": "rate(haltmarket_resolver_resolves_total[5m]) * 60", "refId": "A", "legendFormat": "resolves" },
+        { "expr": "rate(haltmarket_resolver_refunds_total[5m]) * 60", "refId": "B", "legendFormat": "refunds" },
+        { "expr": "rate(haltmarket_resolver_rehalt_extensions_total[5m]) * 60", "refId": "C", "legendFormat": "rehalt extensions" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Settlement latency (ms)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "targets": [
+        { "expr": "haltmarket_resolver_last_settlement_ms", "refId": "A", "legendFormat": "last" },
+        { "expr": "haltmarket_resolver_max_settlement_ms", "refId": "B", "legendFormat": "max" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 60000 },
+              { "color": "red", "value": 120000 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Resolve errors + Polygon empty",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "targets": [
+        { "expr": "rate(haltmarket_resolver_resolve_errors_total[5m])", "refId": "A", "legendFormat": "errors/s" },
+        { "expr": "rate(haltmarket_resolver_polygon_empty_total[5m])", "refId": "B", "legendFormat": "polygon empty/s" }
+      ]
+    }
+  ]
+}

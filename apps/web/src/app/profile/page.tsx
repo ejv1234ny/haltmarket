@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { getServerSupabase } from '@/lib/supabase/server';
 import { supabaseConfigured } from '@/lib/env';
+import { EmailNotifyToggle } from './email-toggle';
 import { HandleForm } from './handle-form';
 
 export const dynamic = 'force-dynamic';
@@ -11,6 +12,7 @@ interface ProfileRow {
   kyc_status: string | null;
   geo_country: string | null;
   is_admin: boolean | null;
+  notify_email_on_halt: boolean | null;
 }
 
 type FromFn = {
@@ -34,7 +36,7 @@ async function loadProfile(): Promise<
   if (!user) return { kind: 'unauthenticated' };
 
   const { data } = await (supabase.from('user_profiles') as unknown as FromFn)
-    .select('handle, kyc_status, geo_country, is_admin')
+    .select('handle, kyc_status, geo_country, is_admin, notify_email_on_halt')
     .eq('user_id', user.id)
     .maybeSingle();
 
@@ -118,6 +120,15 @@ export default async function ProfilePage() {
         </CardHeader>
         <CardContent>
           <HandleForm initialHandle={profile?.handle ?? ''} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Notifications</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <EmailNotifyToggle initial={profile?.notify_email_on_halt ?? false} />
         </CardContent>
       </Card>
     </main>

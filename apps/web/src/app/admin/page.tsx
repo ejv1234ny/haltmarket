@@ -174,7 +174,13 @@ export default async function AdminPage() {
   return (
     <main className="flex flex-col gap-6">
       <header className="flex flex-col gap-2">
-        <h1 className="font-mono text-3xl font-bold tracking-tight">Admin</h1>
+        <div className="flex items-baseline justify-between">
+          <h1 className="font-mono text-3xl font-bold tracking-tight">Admin</h1>
+          <div className="flex gap-3 text-xs text-neutral-400">
+            <a href="/admin/users" className="hover:text-neutral-200">Users →</a>
+            <a href="/admin/audit" className="hover:text-neutral-200">Audit log →</a>
+          </div>
+        </div>
         <p className="text-sm text-neutral-400">
           Crypto rail controls. Freeze switches apply immediately on all services.
         </p>

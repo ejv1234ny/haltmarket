@@ -140,5 +140,52 @@ function json(status: number, body: unknown): Response {
 
   const ok = results.filter((r) => r.status === 'fulfilled').length;
   const failed = results.length - ok;
-  return json(200, { delivered: ok, failed, pruned: dead.length });
+  const pushResult = { delivered: ok, failed, pruned: dead.length };
+
+  // Email fanout — opt-in. Skipped when RESEND_API_KEY is absent (dev).
+  const resendKey = env?.get('RESEND_API_KEY') ?? '';
+  const mailFrom = env?.get('RESEND_FROM_EMAIL') ?? 'no-reply@haltmarket.com';
+  let emailResult: { sent: number; failed: number } | { skipped: true } = { skipped: true };
+  if (resendKey) {
+    const { data: targetsRaw, error: targetsErr } =
+      await db.rpc('get_email_notify_targets');
+    if (targetsErr) {
+      console.error('get_email_notify_targets failed', targetsErr);
+    } else {
+      const targets = ((targetsRaw ?? []) as { user_id: string; email: string }[])
+        .filter((t) => t.email && t.email.includes('@'));
+      let sent = 0;
+      let emailFailed = 0;
+      for (const t of targets) {
+        try {
+          const res = await fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              Authorization: `Bearer ${resendKey}`,
+            },
+            body: JSON.stringify({
+              from: mailFrom,
+              to: [t.email],
+              subject: `${symbol} halted — predict the reopen`,
+              html: `<p>${symbol} was halted at $${payload.record.last_price}.</p>
+                     <p><a href="https://haltmarket.com/market/${payload.record.id}">Make your prediction →</a></p>
+                     <p style="font-size:12px;color:#888">Unsubscribe: open Profile → turn off email notifications.</p>`,
+            }),
+          });
+          if (res.ok) sent++;
+          else {
+            emailFailed++;
+            console.error(`resend ${res.status}: ${await res.text().catch(() => '')}`);
+          }
+        } catch (e) {
+          emailFailed++;
+          console.error('resend fetch failed', (e as Error).message);
+        }
+      }
+      emailResult = { sent, failed: emailFailed };
+    }
+  }
+
+  return json(200, { push: pushResult, email: emailResult });
 });
