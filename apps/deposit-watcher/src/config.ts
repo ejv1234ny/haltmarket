@@ -35,10 +35,23 @@ export type Env = z.infer<typeof schema>;
 export function loadEnv(): Env {
   const parsed = schema.safeParse(process.env);
   if (!parsed.success) {
-    const errors = parsed.error.format();
+    // Emit one line per missing/invalid var so Railway logs stay scannable
+    // instead of a multi-line JSON blob that fragments across log frames.
+    const lines = parsed.error.issues.map((i) => {
+      const path = i.path.join('.') || '(root)';
+      return `  ${path}: ${i.message}`;
+    });
     // eslint-disable-next-line no-console
-    console.error('[config] invalid env:', JSON.stringify(errors, null, 2));
-    process.exit(1);
+    console.error(
+      `[config] invalid env — ${parsed.error.issues.length} problem(s):\n${lines.join('\n')}\n` +
+        '[config] set the missing variables in Railway → Service → Variables and redeploy.',
+    );
+    // Brief sleep so Railway's log buffer flushes before the restart loop
+    // crashes this process again (otherwise the next boot can truncate
+    // this message in the log viewer).
+    setTimeout(() => process.exit(1), 500);
+    // Prevent returning through the happy path while the timer fires.
+    throw new Error('[config] invalid env — process will exit');
   }
   return parsed.data;
 }
