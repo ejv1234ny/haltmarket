@@ -1,10 +1,20 @@
+## Railway config for haltmarket-deposit-watcher.
+##
+## Service's Root Directory is set to `apps/deposit-watcher` in the Railway
+## dashboard — that scopes both where Railway looks for this config AND the
+## Docker build context, so paths below are relative to this directory.
+##
+## startCommand is intentionally omitted — the Dockerfile's CMD runs
+## `node /app/dist/index.js` from WORKDIR `/app`, which is the correct
+## entrypoint. Supplying startCommand here would override CMD with an
+## absolute path that could drift out of sync with Dockerfile layout.
+
 [build]
 builder = "DOCKERFILE"
-dockerfilePath = "apps/deposit-watcher/Dockerfile"
+dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "node /app/apps/deposit-watcher/dist/index.js"
 healthcheckPath = "/healthz"
-healthcheckTimeout = 10
+healthcheckTimeout = 30
 restartPolicyType = "ON_FAILURE"
-restartPolicyMaxRetries = 5
+restartPolicyMaxRetries = 10
